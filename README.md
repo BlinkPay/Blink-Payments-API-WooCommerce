@@ -77,6 +77,38 @@ Refunding from the order screen uses BlinkPay's `account_number` refund type, wh
 - The plugin never stores bank account details for payments; the customer authorises directly with their bank. A refund records the customer's account number in a private order note so you can make the transfer.
 - The customer identifier sent to BlinkPay is a SHA-256 hash of the billing email, never the raw address.
 
+## Development
+
+### Local WordPress
+
+`.wp-env.json` describes a disposable WordPress site (latest core, WooCommerce and Plugin Check) with this repository mounted as a plugin. It needs Docker and Node.
+
+```sh
+npx @wordpress/env start    # http://localhost:8888, admin / password
+npx @wordpress/env stop     # `destroy` also wipes the database
+```
+
+### Plugin Check
+
+[Plugin Check](https://wordpress.org/plugins/plugin-check/) is the tool the WordPress.org review team runs against submissions. Run it before every release:
+
+```sh
+npx @wordpress/env run cli wp plugin check Blink-Payments-API-WooCommerce \
+  --slug=blinkpay-for-woocommerce \
+  --exclude-directories=.github,.idea \
+  --exclude-files=.gitignore,.wp-env.json
+```
+
+`--slug` is required because wp-env mounts the plugin under the repository's directory name; without it every translated string is reported as a text-domain mismatch. The excludes skip files that exist only in the repository — CI leaves them out of the plugin zip. A clean run prints `Success: Checks complete. No errors found.`
+
+### Releasing
+
+CI lints every PHP file on PHP 7.4–8.4 and builds `blinkpay-for-woocommerce.zip` on every push. Pushing a bare semver tag also attaches the zip to a GitHub release:
+
+1. Bump `Version` and `WC tested up to` in `blinkpay-for-woocommerce.php`, `WC_BLINKPAY_VERSION` in the same file, and `Stable tag`, `Tested up to` and the changelog in `readme.txt`. `Version`, `WC_BLINKPAY_VERSION` and `Stable tag` must be identical.
+2. Run Plugin Check and place a sandbox test order.
+3. `git tag -a 1.1.0 -m "1.1.0" && git push origin 1.1.0`
+
 ## Licence
 
 MIT.

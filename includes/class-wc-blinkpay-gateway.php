@@ -215,8 +215,8 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	public function handle_return() {
 		// phpcs:disable WordPress.Security.NonceVerification.Recommended -- the order key authenticates this bank redirect.
 		$order_id = isset( $_GET['order_id'] ) ? absint( $_GET['order_id'] ) : 0;
-		$key      = isset( $_GET['key'] ) ? wc_clean( wp_unslash( $_GET['key'] ) ) : '';
-		$status   = isset( $_GET['status'] ) ? wc_clean( wp_unslash( $_GET['status'] ) ) : '';
+		$key      = isset( $_GET['key'] ) ? sanitize_text_field( wp_unslash( $_GET['key'] ) ) : '';
+		$status   = isset( $_GET['status'] ) ? sanitize_text_field( wp_unslash( $_GET['status'] ) ) : '';
 		// phpcs:enable
 
 		$order = wc_get_order( $order_id );

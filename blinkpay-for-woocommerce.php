@@ -1,18 +1,19 @@
 <?php
 /**
  * Plugin Name: BlinkPay for WooCommerce
- * Plugin URI: https://github.com/BlinkPay/blinkpay-for-woocommerce
+ * Plugin URI: https://github.com/BlinkPay/Blink-Payments-API-WooCommerce
  * Description: Accept New Zealand bank payments through BlinkPay open banking with Blink PayNow one-off payments.
  * Version: 1.0.0
  * Author: BlinkPay
  * Author URI: https://www.blinkpay.co.nz
  * License: MIT
+ * License URI: https://opensource.org/licenses/MIT
  * Text Domain: blinkpay-for-woocommerce
  * Requires at least: 6.0
  * Requires PHP: 7.4
  * Requires Plugins: woocommerce
  * WC requires at least: 7.0
- * WC tested up to: 9.9
+ * WC tested up to: 11.0
  */
 
 defined( 'ABSPATH' ) || exit;
@@ -40,14 +41,7 @@ add_action( 'plugins_loaded', 'wc_blinkpay_init', 11 );
  */
 function wc_blinkpay_init() {
 	if ( ! class_exists( 'WC_Payment_Gateway' ) ) {
-		add_action(
-			'admin_notices',
-			function () {
-				echo '<div class="notice notice-error"><p>'
-					. esc_html__( 'BlinkPay for WooCommerce requires WooCommerce to be installed and active.', 'blinkpay-for-woocommerce' )
-					. '</p></div>';
-			}
-		);
+		add_action( 'admin_notices', 'wc_blinkpay_woocommerce_missing_notice' );
 		return;
 	}
 
@@ -83,6 +77,18 @@ function wc_blinkpay_init() {
 			}
 		}
 	);
+}
+
+/**
+ * Shows the WooCommerce dependency notice, only to users who can act on it.
+ */
+function wc_blinkpay_woocommerce_missing_notice() {
+	if ( ! current_user_can( 'activate_plugins' ) ) {
+		return;
+	}
+	echo '<div class="notice notice-error"><p>'
+		. esc_html__( 'BlinkPay for WooCommerce requires WooCommerce to be installed and active.', 'blinkpay-for-woocommerce' )
+		. '</p></div>';
 }
 
 /**
