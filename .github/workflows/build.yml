@@ -1,0 +1,58 @@
+name: Build
+
+on:
+  push:
+    branches: [ master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php-version: [ '7.4', '8.0', '8.1', '8.2', '8.3', '8.4' ]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use PHP ${{ matrix.php-version }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          coverage: none
+      - name: Lint PHP files
+        run: find . -name '*.php' -not -path './.git/*' -print0 | xargs -0 -n1 php -l
+
+  package:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The zip unpacks to blinkpay-for-woocommerce/, the plugin's canonical
+      # directory name, regardless of the repository name.
+      - name: Build plugin zip
+        run: |
+          mkdir -p build/blinkpay-for-woocommerce
+          rsync -a --exclude='.git' --exclude='.github' --exclude='.gitignore' --exclude='build' ./ build/blinkpay-for-woocommerce/
+          cd build && zip -r blinkpay-for-woocommerce.zip blinkpay-for-woocommerce
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: blinkpay-for-woocommerce
+          path: build/blinkpay-for-woocommerce.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: blinkpay-for-woocommerce
+      - name: Attach zip to the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: blinkpay-for-woocommerce.zip
