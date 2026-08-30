@@ -3,7 +3,7 @@
  * Plugin Name: BlinkPay NZ for WooCommerce
  * Plugin URI: https://github.com/BlinkPay/Blink-Payments-API-WooCommerce
  * Description: Accept New Zealand bank payments through BlinkPay open banking with Blink PayNow one-off payments.
- * Version: 1.0.0
+ * Version: 1.0.3
  * Author: BlinkPay
  * Author URI: https://www.blinkpay.co.nz
  * License: MIT
@@ -18,7 +18,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'WC_BLINKPAY_VERSION', '1.0.0' );
+define( 'WC_BLINKPAY_VERSION', '1.0.3' );
 define( 'WC_BLINKPAY_PLUGIN_FILE', __FILE__ );
 define( 'WC_BLINKPAY_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 define( 'WC_BLINKPAY_PLUGIN_URL', plugin_dir_url( __FILE__ ) );

@@ -102,7 +102,7 @@ npx @wordpress/env run cli wp plugin check Blink-Payments-API-WooCommerce --slug
 
 CI lints every PHP file on PHP 7.4–8.4 and builds `blinkpay-nz-for-woocommerce.zip` on every push. Pushing a bare semver tag also attaches the zip to a GitHub release:
 
-1. Bump `Version` and `WC tested up to` in `blinkpay-nz-for-woocommerce.php`, `WC_BLINKPAY_VERSION` in the same file, and `Stable tag`, `Tested up to` and the changelog in `readme.txt`. `Version`, `WC_BLINKPAY_VERSION` and `Stable tag` must be identical.
+1. Bump `Version` and `WC tested up to` in `blinkpay-nz-for-woocommerce.php`, `WC_BLINKPAY_VERSION` in the same file, and `Stable tag`, `Tested up to` and the changelog in `readme.txt`. `Version`, `WC_BLINKPAY_VERSION`, `Stable tag` and the git tag must all carry the same version number — WordPress serves the zip named by `Stable tag`, `WC_BLINKPAY_VERSION` cache-busts the enqueued scripts, and the tag names the GitHub release, so a mismatch ships stale code or assets.
 2. Run Plugin Check and place a sandbox test order.
 3. `git tag -a 1.1.0 -m "1.1.0" && git push origin 1.1.0`
 
