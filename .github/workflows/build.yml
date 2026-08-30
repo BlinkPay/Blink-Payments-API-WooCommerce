@@ -29,18 +29,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # The zip unpacks to blinkpay-for-woocommerce/, the plugin's canonical
+      # The zip unpacks to blinkpay-nz-for-woocommerce/, the plugin's canonical
       # directory name, regardless of the repository name.
       - name: Build plugin zip
         run: |
-          mkdir -p build/blinkpay-for-woocommerce
-          rsync -a --exclude='.git' --exclude='.github' --exclude='.gitignore' --exclude='.wp-env.json' --exclude='build' ./ build/blinkpay-for-woocommerce/
-          cd build && zip -r blinkpay-for-woocommerce.zip blinkpay-for-woocommerce
+          mkdir -p build/blinkpay-nz-for-woocommerce
+          rsync -a --exclude='.git' --exclude='.claude' --exclude='.github' --exclude='.gitignore' --exclude='.wp-env.json' --exclude='build' ./ build/blinkpay-nz-for-woocommerce/
+          cd build && zip -r blinkpay-nz-for-woocommerce.zip blinkpay-nz-for-woocommerce
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: blinkpay-for-woocommerce
-          path: build/blinkpay-for-woocommerce.zip
+          name: blinkpay-nz-for-woocommerce
+          path: build/blinkpay-nz-for-woocommerce.zip
 
   release:
     if: github.ref_type == 'tag'
@@ -51,8 +51,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: blinkpay-for-woocommerce
+          name: blinkpay-nz-for-woocommerce
       - name: Attach zip to the GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: blinkpay-for-woocommerce.zip
+          files: blinkpay-nz-for-woocommerce.zip

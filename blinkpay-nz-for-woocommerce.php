@@ -1,6 +1,6 @@
 <?php
 /**
- * Plugin Name: BlinkPay for WooCommerce
+ * Plugin Name: BlinkPay NZ for WooCommerce
  * Plugin URI: https://github.com/BlinkPay/Blink-Payments-API-WooCommerce
  * Description: Accept New Zealand bank payments through BlinkPay open banking with Blink PayNow one-off payments.
  * Version: 1.0.0
@@ -8,7 +8,7 @@
  * Author URI: https://www.blinkpay.co.nz
  * License: MIT
  * License URI: https://opensource.org/licenses/MIT
- * Text Domain: blinkpay-for-woocommerce
+ * Text Domain: blinkpay-nz-for-woocommerce
  * Requires at least: 6.0
  * Requires PHP: 7.4
  * Requires Plugins: woocommerce
@@ -87,7 +87,7 @@ function wc_blinkpay_woocommerce_missing_notice() {
 		return;
 	}
 	echo '<div class="notice notice-error"><p>'
-		. esc_html__( 'BlinkPay for WooCommerce requires WooCommerce to be installed and active.', 'blinkpay-for-woocommerce' )
+		. esc_html__( 'BlinkPay NZ for WooCommerce requires WooCommerce to be installed and active.', 'blinkpay-nz-for-woocommerce' )
 		. '</p></div>';
 }
 
@@ -127,7 +127,7 @@ add_filter(
 	'plugin_action_links_' . plugin_basename( __FILE__ ),
 	function ( $links ) {
 		$url = admin_url( 'admin.php?page=wc-settings&tab=checkout&section=blinkpay' );
-		array_unshift( $links, '<a href="' . esc_url( $url ) . '">' . esc_html__( 'Settings', 'blinkpay-for-woocommerce' ) . '</a>' );
+		array_unshift( $links, '<a href="' . esc_url( $url ) . '">' . esc_html__( 'Settings', 'blinkpay-nz-for-woocommerce' ) . '</a>' );
 		return $links;
 	}
 );

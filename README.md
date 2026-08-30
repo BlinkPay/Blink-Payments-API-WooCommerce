@@ -1,4 +1,4 @@
-# BlinkPay for WooCommerce
+# BlinkPay NZ for WooCommerce
 
 Accept New Zealand bank payments in WooCommerce through [BlinkPay](https://www.blinkpay.co.nz) open banking:
 
@@ -17,7 +17,7 @@ Customers are sent to BlinkPay's hosted gateway, choose their bank, and authoris
 
 ## Installation
 
-1. Download `blinkpay-for-woocommerce.zip` from the latest [GitHub release](../../releases) — it is built by CI and unpacks to the plugin's canonical `blinkpay-for-woocommerce/` directory.
+1. Download `blinkpay-nz-for-woocommerce.zip` from the latest [GitHub release](../../releases) — it is built by CI and unpacks to the plugin's canonical `blinkpay-nz-for-woocommerce/` directory.
 2. In WordPress admin, go to **Plugins → Add New → Upload Plugin**, upload the ZIP and activate it.
 3. Go to **WooCommerce → Settings → Payments → BlinkPay**.
 4. Enter your **client ID** and **client secret**, leave **Sandbox mode** ticked, and enable the gateway.
@@ -63,7 +63,7 @@ Refunding from the order screen uses BlinkPay's `account_number` refund type, wh
 ## Extensibility
 
 - `wc_blinkpay_quick_payment_payload` — filter the quick payment request body.
-- `wc_blinkpay_icon` — filter the checkout icon URL.
+- `wc_blinkpay_icon` — filter the checkout logo URL (defaults to the bundled BlinkPay logo).
 
 ## Troubleshooting
 
@@ -93,19 +93,16 @@ npx @wordpress/env stop     # `destroy` also wipes the database
 [Plugin Check](https://wordpress.org/plugins/plugin-check/) is the tool the WordPress.org review team runs against submissions. Run it before every release:
 
 ```sh
-npx @wordpress/env run cli wp plugin check Blink-Payments-API-WooCommerce \
-  --slug=blinkpay-for-woocommerce \
-  --exclude-directories=.github,.idea \
-  --exclude-files=.gitignore,.wp-env.json
+npx @wordpress/env run cli wp plugin check Blink-Payments-API-WooCommerce --slug=blinkpay-nz-for-woocommerce --exclude-directories=.github,.idea --exclude-files=.gitignore,.wp-env.json
 ```
 
 `--slug` is required because wp-env mounts the plugin under the repository's directory name; without it every translated string is reported as a text-domain mismatch. The excludes skip files that exist only in the repository — CI leaves them out of the plugin zip. A clean run prints `Success: Checks complete. No errors found.`
 
 ### Releasing
 
-CI lints every PHP file on PHP 7.4–8.4 and builds `blinkpay-for-woocommerce.zip` on every push. Pushing a bare semver tag also attaches the zip to a GitHub release:
+CI lints every PHP file on PHP 7.4–8.4 and builds `blinkpay-nz-for-woocommerce.zip` on every push. Pushing a bare semver tag also attaches the zip to a GitHub release:
 
-1. Bump `Version` and `WC tested up to` in `blinkpay-for-woocommerce.php`, `WC_BLINKPAY_VERSION` in the same file, and `Stable tag`, `Tested up to` and the changelog in `readme.txt`. `Version`, `WC_BLINKPAY_VERSION` and `Stable tag` must be identical.
+1. Bump `Version` and `WC tested up to` in `blinkpay-nz-for-woocommerce.php`, `WC_BLINKPAY_VERSION` in the same file, and `Stable tag`, `Tested up to` and the changelog in `readme.txt`. `Version`, `WC_BLINKPAY_VERSION` and `Stable tag` must be identical.
 2. Run Plugin Check and place a sandbox test order.
 3. `git tag -a 1.1.0 -m "1.1.0" && git push origin 1.1.0`
 

@@ -11,7 +11,21 @@
 	var createElement = window.wp.element.createElement;
 
 	var settings = getSetting( 'blinkpay_data', {} );
-	var label = decodeEntities( settings.title || 'Pay by bank with BlinkPay' );
+	var title = decodeEntities( settings.title || 'Checkout with BlinkPay' );
+
+	// The label pairs the title with the BlinkPay logo when one is configured.
+	var label = createElement(
+		'span',
+		{ style: { display: 'flex', alignItems: 'center', gap: '0.5em', width: '100%' } },
+		title,
+		settings.icon
+			? createElement( 'img', {
+				src: settings.icon,
+				alt: '',
+				style: { maxHeight: '24px', marginLeft: 'auto' },
+			} )
+			: null
+	);
 
 	var Content = function () {
 		return createElement( 'div', null, decodeEntities( settings.description || '' ) );
@@ -20,7 +34,7 @@
 	registerPaymentMethod( {
 		name: 'blinkpay',
 		label: label,
-		ariaLabel: label,
+		ariaLabel: title,
 		content: createElement( Content ),
 		edit: createElement( Content ),
 		canMakePayment: function () {

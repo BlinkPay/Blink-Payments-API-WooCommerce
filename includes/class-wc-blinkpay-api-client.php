@@ -5,7 +5,7 @@
  * Covers the OAuth token endpoint plus the quick payment and refund endpoints,
  * using the gateway authorisation flow.
  *
- * @package blinkpay-for-woocommerce
+ * @package blinkpay-nz-for-woocommerce
  */
 
 defined( 'ABSPATH' ) || exit;
@@ -85,7 +85,7 @@ class WC_BlinkPay_API_Client {
 		if ( ! $this->is_configured() ) {
 			return new WP_Error(
 				'blinkpay_not_configured',
-				__( 'BlinkPay is not configured. Enter the client ID and client secret in the gateway settings.', 'blinkpay-for-woocommerce' )
+				__( 'BlinkPay is not configured. Enter the client ID and client secret in the gateway settings.', 'blinkpay-nz-for-woocommerce' )
 			);
 		}
 
@@ -128,7 +128,7 @@ class WC_BlinkPay_API_Client {
 			$this->log( 'Access token request rejected with HTTP ' . $code );
 			return new WP_Error(
 				'blinkpay_auth_failed',
-				__( 'Could not authenticate with BlinkPay. Check the client ID and client secret.', 'blinkpay-for-woocommerce' )
+				__( 'Could not authenticate with BlinkPay. Check the client ID and client secret.', 'blinkpay-nz-for-woocommerce' )
 			);
 		}
 
@@ -263,7 +263,7 @@ class WC_BlinkPay_API_Client {
 		}
 		if ( '' === $message ) {
 			/* translators: %d: HTTP status code */
-			$message = sprintf( __( 'BlinkPay request failed with HTTP %d.', 'blinkpay-for-woocommerce' ), $code );
+			$message = sprintf( __( 'BlinkPay request failed with HTTP %d.', 'blinkpay-nz-for-woocommerce' ), $code );
 		}
 
 		return $message;

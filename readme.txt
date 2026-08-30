@@ -1,4 +1,4 @@
-=== BlinkPay for WooCommerce ===
+=== BlinkPay NZ for WooCommerce ===
 Contributors: reybabilonia
 Tags: woocommerce, payment gateway, open banking, new zealand, bank payments
 Requires at least: 6.0
@@ -12,7 +12,7 @@ Accept New Zealand bank payments in WooCommerce through BlinkPay open banking. N
 
 == Description ==
 
-BlinkPay for WooCommerce lets your customers pay directly from their New Zealand bank account using [BlinkPay](https://www.blinkpay.co.nz) open banking.
+BlinkPay NZ for WooCommerce lets your customers pay directly from their New Zealand bank account using [BlinkPay](https://www.blinkpay.co.nz) open banking.
 
 * **Blink PayNow** — one-off payments at checkout, via quick payments.
 * **Refunds** — refund requests from the WooCommerce order screen retrieve the customer's account number for a manual bank transfer.
@@ -52,7 +52,7 @@ This plugin connects to the BlinkPay Debit API, a third-party service operated b
 
 == Installation ==
 
-1. In WordPress admin, go to **Plugins → Add New**, search for "BlinkPay for WooCommerce", then install and activate it.
+1. In WordPress admin, go to **Plugins → Add New**, search for "BlinkPay NZ for WooCommerce", then install and activate it.
 2. Go to **WooCommerce → Settings → Payments → BlinkPay**.
 3. Enter your **client ID** and **client secret**, leave **Sandbox mode** ticked, and enable the gateway.
 4. Place a test order. Sandbox payments never move real money.

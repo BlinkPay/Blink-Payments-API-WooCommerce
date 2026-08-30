@@ -5,7 +5,7 @@
  * Orders are paid with Blink PayNow quick payments through BlinkPay's hosted
  * gateway flow.
  *
- * @package blinkpay-for-woocommerce
+ * @package blinkpay-nz-for-woocommerce
  */
 
 defined( 'ABSPATH' ) || exit;
@@ -36,10 +36,10 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 
 	public function __construct() {
 		$this->id                 = 'blinkpay';
-		$this->icon               = apply_filters( 'wc_blinkpay_icon', '' );
+		$this->icon               = apply_filters( 'wc_blinkpay_icon', WC_BLINKPAY_PLUGIN_URL . 'assets/images/blinkpay-logo.png' );
 		$this->has_fields         = false;
-		$this->method_title       = __( 'BlinkPay', 'blinkpay-for-woocommerce' );
-		$this->method_description = __( 'Accept New Zealand bank payments through BlinkPay open banking. Orders are paid with Blink PayNow quick payments.', 'blinkpay-for-woocommerce' );
+		$this->method_title       = __( 'BlinkPay', 'blinkpay-nz-for-woocommerce' );
+		$this->method_description = __( 'Accept New Zealand bank payments through BlinkPay open banking. Orders are paid with Blink PayNow quick payments.', 'blinkpay-nz-for-woocommerce' );
 		$this->supports           = array( 'products', 'refunds' );
 
 		$this->init_form_fields();
@@ -55,61 +55,88 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	}
 
 	/**
+	 * The logo shown next to the payment method title at checkout, height
+	 * constrained because the source image is full size.
+	 *
+	 * @return string
+	 */
+	public function get_icon() {
+		if ( ! $this->icon ) {
+			return '';
+		}
+
+		$icon = '<img src="' . esc_url( $this->icon ) . '" alt="' . esc_attr( $this->get_title() ) . '" style="max-height: 24px; vertical-align: middle;" />';
+
+		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- WooCommerce core's own filter, applied by WC_Payment_Gateway::get_icon(), kept so icon customisations still apply.
+		return apply_filters( 'woocommerce_gateway_icon', $icon, $this->id );
+	}
+
+	/**
+	 * The gateway settings screen, with the BlinkPay logo above the fields.
+	 */
+	public function admin_options() {
+		if ( $this->icon ) {
+			echo '<img src="' . esc_url( $this->icon ) . '" alt="BlinkPay" style="max-height: 40px; margin-top: 1em;" />';
+		}
+		parent::admin_options();
+	}
+
+	/**
 	 * Settings fields shown under WooCommerce > Settings > Payments > BlinkPay.
 	 */
 	public function init_form_fields() {
 		$this->form_fields = array(
 			'enabled'         => array(
-				'title'   => __( 'Enable/Disable', 'blinkpay-for-woocommerce' ),
+				'title'   => __( 'Enable/Disable', 'blinkpay-nz-for-woocommerce' ),
 				'type'    => 'checkbox',
-				'label'   => __( 'Enable BlinkPay', 'blinkpay-for-woocommerce' ),
+				'label'   => __( 'Enable BlinkPay', 'blinkpay-nz-for-woocommerce' ),
 				'default' => 'no',
 			),
 			'title'           => array(
-				'title'       => __( 'Title', 'blinkpay-for-woocommerce' ),
+				'title'       => __( 'Title', 'blinkpay-nz-for-woocommerce' ),
 				'type'        => 'text',
-				'description' => __( 'The payment method name the customer sees at checkout.', 'blinkpay-for-woocommerce' ),
-				'default'     => __( 'Pay by bank with BlinkPay', 'blinkpay-for-woocommerce' ),
+				'description' => __( 'The payment method name the customer sees at checkout.', 'blinkpay-nz-for-woocommerce' ),
+				'default'     => __( 'Checkout with BlinkPay', 'blinkpay-nz-for-woocommerce' ),
 				'desc_tip'    => true,
 			),
 			'description'     => array(
-				'title'       => __( 'Description', 'blinkpay-for-woocommerce' ),
+				'title'       => __( 'Description', 'blinkpay-nz-for-woocommerce' ),
 				'type'        => 'textarea',
-				'description' => __( 'The payment method description the customer sees at checkout.', 'blinkpay-for-woocommerce' ),
-				'default'     => __( 'Pay securely from your New Zealand bank account. No card required.', 'blinkpay-for-woocommerce' ),
+				'description' => __( 'The payment method description the customer sees at checkout.', 'blinkpay-nz-for-woocommerce' ),
+				'default'     => __( 'Pay securely from your New Zealand bank account.', 'blinkpay-nz-for-woocommerce' ),
 				'desc_tip'    => true,
 			),
 			'sandbox'         => array(
-				'title'       => __( 'Sandbox mode', 'blinkpay-for-woocommerce' ),
+				'title'       => __( 'Sandbox mode', 'blinkpay-nz-for-woocommerce' ),
 				'type'        => 'checkbox',
-				'label'       => __( 'Use the BlinkPay sandbox environment', 'blinkpay-for-woocommerce' ),
-				'description' => __( 'Sandbox payments never move real money. Untick this only with production credentials.', 'blinkpay-for-woocommerce' ),
+				'label'       => __( 'Use the BlinkPay sandbox environment', 'blinkpay-nz-for-woocommerce' ),
+				'description' => __( 'Sandbox payments never move real money. Untick this only with production credentials.', 'blinkpay-nz-for-woocommerce' ),
 				'default'     => 'yes',
 			),
 			'client_id'       => array(
-				'title'       => __( 'Client ID', 'blinkpay-for-woocommerce' ),
+				'title'       => __( 'Client ID', 'blinkpay-nz-for-woocommerce' ),
 				'type'        => 'text',
-				'description' => __( 'Issued by BlinkPay for the selected environment. Can also be set with the BLINKPAY_CLIENT_ID constant in wp-config.php, which takes precedence.', 'blinkpay-for-woocommerce' ),
+				'description' => __( 'Issued by BlinkPay for the selected environment. Can also be set with the BLINKPAY_CLIENT_ID constant in wp-config.php, which takes precedence.', 'blinkpay-nz-for-woocommerce' ),
 				'default'     => '',
 			),
 			'client_secret'   => array(
-				'title'       => __( 'Client secret', 'blinkpay-for-woocommerce' ),
+				'title'       => __( 'Client secret', 'blinkpay-nz-for-woocommerce' ),
 				'type'        => 'password',
-				'description' => __( 'Issued by BlinkPay for the selected environment. For stronger protection define the BLINKPAY_CLIENT_SECRET constant in wp-config.php instead of storing it in the database.', 'blinkpay-for-woocommerce' ),
+				'description' => __( 'Issued by BlinkPay for the selected environment. For stronger protection define the BLINKPAY_CLIENT_SECRET constant in wp-config.php instead of storing it in the database.', 'blinkpay-nz-for-woocommerce' ),
 				'default'     => '',
 			),
 			'pcr_particulars' => array(
-				'title'       => __( 'Bank statement particulars', 'blinkpay-for-woocommerce' ),
+				'title'       => __( 'Bank statement particulars', 'blinkpay-nz-for-woocommerce' ),
 				'type'        => 'text',
-				'description' => __( 'Shown on the customer\'s bank statement, up to 12 characters. The order number is sent as the reference.', 'blinkpay-for-woocommerce' ),
+				'description' => __( 'Shown on the customer\'s bank statement, up to 12 characters. The order number is sent as the reference.', 'blinkpay-nz-for-woocommerce' ),
 				'default'     => 'Order',
 				'desc_tip'    => true,
 			),
 			'debug'           => array(
-				'title'       => __( 'Debug logging', 'blinkpay-for-woocommerce' ),
+				'title'       => __( 'Debug logging', 'blinkpay-nz-for-woocommerce' ),
 				'type'        => 'checkbox',
-				'label'       => __( 'Log API activity to WooCommerce > Status > Logs (source: blinkpay)', 'blinkpay-for-woocommerce' ),
-				'description' => __( 'Credentials and tokens are never logged.', 'blinkpay-for-woocommerce' ),
+				'label'       => __( 'Log API activity to WooCommerce > Status > Logs (source: blinkpay)', 'blinkpay-nz-for-woocommerce' ),
+				'description' => __( 'Credentials and tokens are never logged.', 'blinkpay-nz-for-woocommerce' ),
 				'default'     => 'no',
 			),
 		);
@@ -150,7 +177,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		$order = wc_get_order( $order_id );
 
 		if ( ! $order || 'NZD' !== $order->get_currency() ) {
-			wc_add_notice( __( 'BlinkPay can only process payments in New Zealand dollars.', 'blinkpay-for-woocommerce' ), 'error' );
+			wc_add_notice( __( 'BlinkPay can only process payments in New Zealand dollars.', 'blinkpay-nz-for-woocommerce' ), 'error' );
 			return array( 'result' => 'failure' );
 		}
 
@@ -187,16 +214,16 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		);
 
 		if ( is_wp_error( $response ) || empty( $response['redirect_uri'] ) || empty( $response['quick_payment_id'] ) ) {
-			$detail = is_wp_error( $response ) ? $response->get_error_message() : __( 'No redirect URI was returned.', 'blinkpay-for-woocommerce' );
+			$detail = is_wp_error( $response ) ? $response->get_error_message() : __( 'No redirect URI was returned.', 'blinkpay-nz-for-woocommerce' );
 			/* translators: %s: API error detail */
-			$order->add_order_note( sprintf( __( 'BlinkPay quick payment creation failed: %s', 'blinkpay-for-woocommerce' ), $detail ) );
-			wc_add_notice( __( 'We could not start your BlinkPay payment. Please try again or choose another payment method.', 'blinkpay-for-woocommerce' ), 'error' );
+			$order->add_order_note( sprintf( __( 'BlinkPay quick payment creation failed: %s', 'blinkpay-nz-for-woocommerce' ), $detail ) );
+			wc_add_notice( __( 'We could not start your BlinkPay payment. Please try again or choose another payment method.', 'blinkpay-nz-for-woocommerce' ), 'error' );
 			return array( 'result' => 'failure' );
 		}
 
 		$order->update_meta_data( '_blinkpay_quick_payment_id', $response['quick_payment_id'] );
 		/* translators: %s: quick payment ID */
-		$order->add_order_note( sprintf( __( 'BlinkPay quick payment %s created; customer redirected to the Blink gateway.', 'blinkpay-for-woocommerce' ), $response['quick_payment_id'] ) );
+		$order->add_order_note( sprintf( __( 'BlinkPay quick payment %s created; customer redirected to the Blink gateway.', 'blinkpay-nz-for-woocommerce' ), $response['quick_payment_id'] ) );
 		$order->save();
 
 		return array(
@@ -235,8 +262,8 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		// including values this version does not recognise.
 		if ( '' !== $status && 'pending' !== $status ) {
 			/* translators: %s: gateway status parameter */
-			$this->fail_order( $order, sprintf( __( 'The customer did not complete the BlinkPay gateway journey (status: %s).', 'blinkpay-for-woocommerce' ), $status ) );
-			wc_add_notice( __( 'Your payment was not completed and you have not been charged. Please try again.', 'blinkpay-for-woocommerce' ), 'error' );
+			$this->fail_order( $order, sprintf( __( 'The customer did not complete the BlinkPay gateway journey (status: %s).', 'blinkpay-nz-for-woocommerce' ), $status ) );
+			wc_add_notice( __( 'Your payment was not completed and you have not been charged. Please try again.', 'blinkpay-nz-for-woocommerce' ), 'error' );
 			wp_safe_redirect( $order->get_checkout_payment_url() );
 			exit;
 		}
@@ -244,7 +271,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		$this->confirm_quick_payment( $order );
 
 		if ( $order->has_status( 'failed' ) ) {
-			wc_add_notice( __( 'Your payment was not completed. Please try again.', 'blinkpay-for-woocommerce' ), 'error' );
+			wc_add_notice( __( 'Your payment was not completed. Please try again.', 'blinkpay-nz-for-woocommerce' ), 'error' );
 			wp_safe_redirect( $order->get_checkout_payment_url() );
 			exit;
 		}
@@ -264,7 +291,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	public function confirm_quick_payment( $order ) {
 		$quick_payment_id = $order->get_meta( '_blinkpay_quick_payment_id' );
 		if ( ! $quick_payment_id ) {
-			$this->fail_order( $order, __( 'No BlinkPay quick payment ID was stored against this order.', 'blinkpay-for-woocommerce' ) );
+			$this->fail_order( $order, __( 'No BlinkPay quick payment ID was stored against this order.', 'blinkpay-nz-for-woocommerce' ) );
 			return 'failed';
 		}
 
@@ -286,7 +313,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			}
 		}
 
-		$this->await_confirmation( $order, __( 'BlinkPay has not yet confirmed the payment. The order will update automatically once the outcome is known.', 'blinkpay-for-woocommerce' ) );
+		$this->await_confirmation( $order, __( 'BlinkPay has not yet confirmed the payment. The order will update automatically once the outcome is known.', 'blinkpay-nz-for-woocommerce' ) );
 
 		return 'pending';
 	}
@@ -306,7 +333,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		$status = isset( $consent['status'] ) ? $consent['status'] : '';
 		if ( in_array( $status, array( 'Rejected', 'Revoked', 'GatewayTimeout' ), true ) ) {
 			/* translators: %s: consent status */
-			$this->fail_order( $order, sprintf( __( 'The BlinkPay consent ended with status %s.', 'blinkpay-for-woocommerce' ), $status ) );
+			$this->fail_order( $order, sprintf( __( 'The BlinkPay consent ended with status %s.', 'blinkpay-nz-for-woocommerce' ), $status ) );
 			return 'failed';
 		}
 
@@ -334,13 +361,13 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		if ( 'AcceptedSettlementCompleted' === $status ) {
 			$order->payment_complete( $payment_id );
 			/* translators: %s: payment ID */
-			$order->add_order_note( sprintf( __( 'BlinkPay payment %s completed.', 'blinkpay-for-woocommerce' ), $payment_id ) );
+			$order->add_order_note( sprintf( __( 'BlinkPay payment %s completed.', 'blinkpay-nz-for-woocommerce' ), $payment_id ) );
 			return 'paid';
 		}
 
 		if ( 'Rejected' === $status ) {
 			/* translators: %s: payment ID */
-			$this->fail_order( $order, sprintf( __( 'BlinkPay payment %s was rejected by the bank.', 'blinkpay-for-woocommerce' ), $payment_id ) );
+			$this->fail_order( $order, sprintf( __( 'BlinkPay payment %s was rejected by the bank.', 'blinkpay-nz-for-woocommerce' ), $payment_id ) );
 			return 'failed';
 		}
 
@@ -407,7 +434,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		if ( $attempts < self::MAX_STATUS_CHECKS ) {
 			$this->schedule_status_check( $order );
 		} else {
-			$order->add_order_note( __( 'BlinkPay automatic status checks are exhausted. Check the payment in the BlinkPay merchant portal and update the order manually.', 'blinkpay-for-woocommerce' ) );
+			$order->add_order_note( __( 'BlinkPay automatic status checks are exhausted. Check the payment in the BlinkPay merchant portal and update the order manually.', 'blinkpay-nz-for-woocommerce' ) );
 		}
 	}
 
@@ -426,7 +453,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	public function process_refund( $order_id, $amount = null, $reason = '' ) {
 		$order = wc_get_order( $order_id );
 		if ( ! $order ) {
-			return new WP_Error( 'blinkpay_refund_failed', __( 'Order not found.', 'blinkpay-for-woocommerce' ) );
+			return new WP_Error( 'blinkpay_refund_failed', __( 'Order not found.', 'blinkpay-nz-for-woocommerce' ) );
 		}
 
 		$payment_id = $order->get_meta( '_blinkpay_payment_id' );
@@ -434,12 +461,12 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			$payment_id = $order->get_transaction_id();
 		}
 		if ( ! $payment_id ) {
-			return new WP_Error( 'blinkpay_refund_failed', __( 'No BlinkPay payment ID is stored against this order.', 'blinkpay-for-woocommerce' ) );
+			return new WP_Error( 'blinkpay_refund_failed', __( 'No BlinkPay payment ID is stored against this order.', 'blinkpay-nz-for-woocommerce' ) );
 		}
 
 		$amount = (float) $amount;
 		if ( $amount <= 0 ) {
-			return new WP_Error( 'blinkpay_refund_failed', __( 'The refund amount must be greater than zero.', 'blinkpay-for-woocommerce' ) );
+			return new WP_Error( 'blinkpay_refund_failed', __( 'The refund amount must be greater than zero.', 'blinkpay-nz-for-woocommerce' ) );
 		}
 
 		$client = $this->get_api_client();
@@ -451,19 +478,19 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			)
 		);
 		if ( is_wp_error( $response ) || empty( $response['refund_id'] ) ) {
-			$detail = is_wp_error( $response ) ? $response->get_error_message() : __( 'No refund ID was returned.', 'blinkpay-for-woocommerce' );
+			$detail = is_wp_error( $response ) ? $response->get_error_message() : __( 'No refund ID was returned.', 'blinkpay-nz-for-woocommerce' );
 			return new WP_Error( 'blinkpay_refund_failed', $detail );
 		}
 
 		$refund = $client->get_refund( $response['refund_id'] );
 		if ( is_wp_error( $refund ) || empty( $refund['account_number'] ) ) {
-			return new WP_Error( 'blinkpay_refund_failed', __( 'BlinkPay did not return the customer\'s account number. Try the refund again.', 'blinkpay-for-woocommerce' ) );
+			return new WP_Error( 'blinkpay_refund_failed', __( 'BlinkPay did not return the customer\'s account number. Try the refund again.', 'blinkpay-nz-for-woocommerce' ) );
 		}
 
 		$order->add_order_note(
 			sprintf(
 				/* translators: 1: amount, 2: bank account number, 3: refund ID, 4: reason */
-				__( 'BlinkPay does not transfer refunds automatically. Pay NZD %1$s to the customer\'s account %2$s from your own bank. BlinkPay refund reference: %3$s. %4$s', 'blinkpay-for-woocommerce' ),
+				__( 'BlinkPay does not transfer refunds automatically. Pay NZD %1$s to the customer\'s account %2$s from your own bank. BlinkPay refund reference: %3$s. %4$s', 'blinkpay-nz-for-woocommerce' ),
 				$this->format_amount( $amount ),
 				$refund['account_number'],
 				$response['refund_id'],

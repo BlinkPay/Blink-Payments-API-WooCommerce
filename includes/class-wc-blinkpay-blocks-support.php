@@ -2,7 +2,7 @@
 /**
  * Block-based checkout integration for the BlinkPay gateway.
  *
- * @package blinkpay-for-woocommerce
+ * @package blinkpay-nz-for-woocommerce
  */
 
 defined( 'ABSPATH' ) || exit;
@@ -55,8 +55,9 @@ final class WC_BlinkPay_Blocks_Support extends AbstractPaymentMethodType {
 		$gateway = wc_blinkpay_gateway();
 
 		return array(
-			'title'       => $this->get_setting( 'title', __( 'Pay by bank with BlinkPay', 'blinkpay-for-woocommerce' ) ),
+			'title'       => $this->get_setting( 'title', __( 'Checkout with BlinkPay', 'blinkpay-nz-for-woocommerce' ) ),
 			'description' => $this->get_setting( 'description', '' ),
+			'icon'        => $gateway ? $gateway->icon : '',
 			'supports'    => $gateway ? array_filter( $gateway->supports, array( $gateway, 'supports' ) ) : array( 'products' ),
 		);
 	}

@@ -3,7 +3,7 @@
  * Removes plugin settings and cached tokens on uninstall. Order metadata is
  * kept: it is part of the merchant's payment records.
  *
- * @package blinkpay-for-woocommerce
+ * @package blinkpay-nz-for-woocommerce
  */
 
 defined( 'WP_UNINSTALL_PLUGIN' ) || exit;
