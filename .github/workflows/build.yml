@@ -15,7 +15,7 @@ jobs:
       matrix:
         php-version: [ '7.4', '8.0', '8.1', '8.2', '8.3', '8.4' ]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Use PHP ${{ matrix.php-version }}
         uses: shivammathur/setup-php@v2
         with:
@@ -28,7 +28,7 @@ jobs:
     needs: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # The zip unpacks to blinkpay-nz-for-woocommerce/, the plugin's canonical
       # directory name, regardless of the repository name.
       - name: Build plugin zip
@@ -37,7 +37,7 @@ jobs:
           rsync -a --exclude='.git' --exclude='.claude' --exclude='.github' --exclude='.gitignore' --exclude='.wp-env.json' --exclude='build' ./ build/blinkpay-nz-for-woocommerce/
           cd build && zip -r blinkpay-nz-for-woocommerce.zip blinkpay-nz-for-woocommerce
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: blinkpay-nz-for-woocommerce
           path: build/blinkpay-nz-for-woocommerce.zip
@@ -49,7 +49,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: blinkpay-nz-for-woocommerce
       - name: Attach zip to the GitHub release
