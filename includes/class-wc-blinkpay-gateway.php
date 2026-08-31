@@ -214,6 +214,11 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		);
 
 		if ( is_wp_error( $response ) || empty( $response['redirect_uri'] ) || empty( $response['quick_payment_id'] ) ) {
+			if ( is_wp_error( $response ) && $this->is_idempotency_conflict( $response ) ) {
+				$this->reset_idempotency_key( $order, 'quick_payment' );
+				$order->save();
+				$order->add_order_note( __( 'BlinkPay rejected the stored idempotency key because it is already bound to a finished payment attempt. The key has been discarded; the customer can retry checkout and a fresh payment will be created.', 'blinkpay-nz-for-woocommerce' ) );
+			}
 			$detail = is_wp_error( $response ) ? $response->get_error_message() : __( 'No redirect URI was returned.', 'blinkpay-nz-for-woocommerce' );
 			/* translators: %s: API error detail */
 			$order->add_order_note( sprintf( __( 'BlinkPay quick payment creation failed: %s', 'blinkpay-nz-for-woocommerce' ), $detail ) );
@@ -222,6 +227,9 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		}
 
 		$order->update_meta_data( '_blinkpay_quick_payment_id', $response['quick_payment_id'] );
+		// The key is now permanently bound to this quick payment, so a later
+		// attempt (after a cancelled or rejected consent) must mint a fresh one.
+		$this->reset_idempotency_key( $order, 'quick_payment' );
 		/* translators: %s: quick payment ID */
 		$order->add_order_note( sprintf( __( 'BlinkPay quick payment %s created; customer redirected to the Blink gateway.', 'blinkpay-nz-for-woocommerce' ), $response['quick_payment_id'] ) );
 		$order->save();
@@ -522,8 +530,10 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	}
 
 	/**
-	 * Returns a stable idempotency key for one API operation on one order, so
-	 * a checkout retry can never double-create on the BlinkPay side.
+	 * Returns the idempotency key for the current payment attempt of one API
+	 * operation. The key is reused while the attempt is unresolved, so a lost
+	 * response can be retried without double-creating, and is discarded with
+	 * reset_idempotency_key() once it is bound to a payment.
 	 *
 	 * @param WC_Order $order   The order.
 	 * @param string   $context The operation, e.g. 'quick_payment'.
@@ -539,6 +549,34 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		}
 
 		return $key;
+	}
+
+	/**
+	 * Discards the stored idempotency key for one API operation so the next
+	 * get_idempotency_key() call mints a fresh one. The API binds a key
+	 * permanently to the payment it creates, so a spent key could never
+	 * produce a new payment for a retried order. The caller is responsible
+	 * for saving the order.
+	 *
+	 * @param WC_Order $order   The order.
+	 * @param string   $context The operation, e.g. 'quick_payment'.
+	 */
+	public function reset_idempotency_key( $order, $context ) {
+		$order->delete_meta_data( '_blinkpay_idempotency_' . $context );
+	}
+
+	/**
+	 * Whether an API error is the 409 conflict returned when an idempotency
+	 * key is reused after being bound to a payment in a terminal state
+	 * (error code BP710).
+	 *
+	 * @param WP_Error $error The API error.
+	 * @return bool
+	 */
+	private function is_idempotency_conflict( $error ) {
+		$data = $error->get_error_data();
+
+		return is_array( $data ) && isset( $data['status'] ) && 409 === $data['status'];
 	}
 
 	/**

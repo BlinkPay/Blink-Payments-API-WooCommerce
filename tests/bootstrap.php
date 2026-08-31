@@ -82,13 +82,21 @@ class WP_Error {
 	/** @var string */
 	private $message;
 
-	public function __construct( $code = '', $message = '' ) {
+	/** @var mixed */
+	private $data;
+
+	public function __construct( $code = '', $message = '', $data = null ) {
 		$this->code    = $code;
 		$this->message = $message;
+		$this->data    = $data;
 	}
 
 	public function get_error_message() {
 		return $this->message;
+	}
+
+	public function get_error_data() {
+		return $this->data;
 	}
 }
 
@@ -233,6 +241,10 @@ class WC_BlinkPay_Test_Order {
 		$this->meta[ $key ] = $value;
 	}
 
+	public function delete_meta_data( $key ) {
+		unset( $this->meta[ $key ] );
+	}
+
 	public function save() {
 		return $this->id;
 	}
@@ -263,3 +275,56 @@ class WC_BlinkPay_Test_Order {
 }
 
 require_once dirname( __DIR__ ) . '/includes/class-wc-blinkpay-gateway.php';
+
+// --- Test doubles -------------------------------------------------------------
+
+/**
+ * A gateway wired to a canned API client, so no HTTP is involved.
+ */
+class WC_BlinkPay_Test_Gateway extends WC_BlinkPay_Gateway {
+
+	/** @var object */
+	private $test_api_client;
+
+	public function __construct( $test_api_client ) {
+		parent::__construct();
+		$this->test_api_client = $test_api_client;
+	}
+
+	public function get_api_client() {
+		return $this->test_api_client;
+	}
+}
+
+/**
+ * An API client that records every create_quick_payment call and answers
+ * from a queue of canned responses.
+ */
+class WC_BlinkPay_Fake_API_Client {
+
+	/** @var array[] Each entry: array( 'payload' => …, 'idempotency_key' => … ). */
+	public $create_calls = array();
+
+	/** @var array */
+	private $responses;
+
+	/**
+	 * @param array $responses Responses returned in order, one per create call.
+	 */
+	public function __construct( array $responses ) {
+		$this->responses = $responses;
+	}
+
+	public function is_configured() {
+		return true;
+	}
+
+	public function create_quick_payment( $payload, $idempotency_key ) {
+		$this->create_calls[] = array(
+			'payload'         => $payload,
+			'idempotency_key' => $idempotency_key,
+		);
+
+		return array_shift( $this->responses );
+	}
+}

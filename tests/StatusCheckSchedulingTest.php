@@ -9,45 +9,6 @@
 
 use PHPUnit\Framework\TestCase;
 
-/**
- * A gateway wired to a canned API client, so no HTTP is involved.
- */
-class WC_BlinkPay_Test_Gateway extends WC_BlinkPay_Gateway {
-
-	/** @var object */
-	private $test_api_client;
-
-	public function __construct( $test_api_client ) {
-		parent::__construct();
-		$this->test_api_client = $test_api_client;
-	}
-
-	public function get_api_client() {
-		return $this->test_api_client;
-	}
-}
-
-/**
- * An API client returning a canned create_quick_payment response.
- */
-class WC_BlinkPay_Canned_API_Client {
-
-	/** @var mixed */
-	private $create_response;
-
-	public function __construct( $create_response ) {
-		$this->create_response = $create_response;
-	}
-
-	public function is_configured() {
-		return true;
-	}
-
-	public function create_quick_payment( $payload, $idempotency_key ) {
-		return $this->create_response;
-	}
-}
-
 class StatusCheckSchedulingTest extends TestCase {
 
 	protected function setUp(): void {
@@ -70,10 +31,12 @@ class StatusCheckSchedulingTest extends TestCase {
 		$this->register_order( 123 );
 
 		$gateway = new WC_BlinkPay_Test_Gateway(
-			new WC_BlinkPay_Canned_API_Client(
+			new WC_BlinkPay_Fake_API_Client(
 				array(
-					'quick_payment_id' => 'qp-123',
-					'redirect_uri'     => 'https://gateway.test/pay/qp-123',
+					array(
+						'quick_payment_id' => 'qp-123',
+						'redirect_uri'     => 'https://gateway.test/pay/qp-123',
+					),
 				)
 			)
 		);
@@ -97,7 +60,7 @@ class StatusCheckSchedulingTest extends TestCase {
 		$this->register_order( 124 );
 
 		$gateway = new WC_BlinkPay_Test_Gateway(
-			new WC_BlinkPay_Canned_API_Client( new WP_Error( 'blinkpay_api_error', 'Service unavailable.' ) )
+			new WC_BlinkPay_Fake_API_Client( array( new WP_Error( 'blinkpay_api_error', 'Service unavailable.' ) ) )
 		);
 
 		$result = $gateway->process_payment( 124 );
@@ -110,10 +73,12 @@ class StatusCheckSchedulingTest extends TestCase {
 		$order = $this->register_order( 125 );
 
 		$gateway = new WC_BlinkPay_Test_Gateway(
-			new WC_BlinkPay_Canned_API_Client(
+			new WC_BlinkPay_Fake_API_Client(
 				array(
-					'quick_payment_id' => 'qp-125',
-					'redirect_uri'     => 'https://gateway.test/pay/qp-125',
+					array(
+						'quick_payment_id' => 'qp-125',
+						'redirect_uri'     => 'https://gateway.test/pay/qp-125',
+					),
 				)
 			)
 		);
