@@ -345,6 +345,14 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		// — so a fresh quick payment is safe to create over it.
 		$this->reset_payment_attempt_state( $order );
 
+		// confirm_quick_payment() marked the order failed as it confirmed
+		// that outcome, but the customer is standing at checkout paying it
+		// again: it goes back to pending — the state of a checkout in
+		// progress — so they are not shown a failed order while they pay.
+		if ( $order->has_status( 'failed' ) ) {
+			$order->update_status( 'pending', __( 'The customer is retrying the payment; a fresh BlinkPay quick payment is being created over the failed attempt.', 'blinkpay-nz-for-woocommerce' ) );
+		}
+
 		return null;
 	}
 

@@ -151,6 +151,7 @@ class CheckoutRetryTest extends TestCase {
 		$this->assertSame( 'https://gateway.test/pay/qp-fresh', $result['redirect'] );
 		$this->assertCount( 1, $client->create_calls, 'A confirmed rejection means no money moved, so a fresh payment is safe.' );
 		$this->assertSame( 'qp-fresh', $order->get_meta( '_blinkpay_quick_payment_id' ) );
+		$this->assertSame( 'pending', $order->get_status(), 'The customer is paying the order again: it must not sit failed under them.' );
 	}
 
 	public function test_a_retry_after_a_rejected_consent_discards_the_previous_attempts_state() {
