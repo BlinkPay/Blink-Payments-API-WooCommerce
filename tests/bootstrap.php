@@ -32,6 +32,28 @@ function __( $text, $domain = 'default' ) {
 	return $text;
 }
 
+function absint( $maybeint ) {
+	return abs( (int) $maybeint );
+}
+
+function wp_unslash( $value ) {
+	return is_string( $value ) ? stripslashes( $value ) : $value;
+}
+
+function sanitize_text_field( $str ) {
+	return trim( preg_replace( '/[\r\n\t ]+/', ' ', strip_tags( (string) $str ) ) );
+}
+
+/**
+ * Thrown by the wp_safe_redirect() stub so tests can observe the redirect
+ * target instead of exiting the process; the message carries the location.
+ */
+class WC_BlinkPay_Test_Redirect extends RuntimeException {}
+
+function wp_safe_redirect( $location, $status = 302 ) {
+	throw new WC_BlinkPay_Test_Redirect( $location );
+}
+
 function apply_filters( $hook_name, $value, ...$args ) {
 	return $value;
 }
@@ -117,6 +139,10 @@ function wc_add_notice( $message, $notice_type = 'success' ) {
 
 function get_woocommerce_currency() {
 	return 'NZD';
+}
+
+function wc_get_checkout_url() {
+	return 'https://example.test/checkout/';
 }
 
 function WC() {
@@ -217,6 +243,22 @@ class WC_BlinkPay_Test_Order {
 		return 'wc_order_test_key';
 	}
 
+	public function key_is_valid( $key ) {
+		return $this->get_order_key() === $key;
+	}
+
+	public function get_payment_method() {
+		return 'blinkpay';
+	}
+
+	public function get_checkout_order_received_url() {
+		return 'https://example.test/order-received/' . $this->id . '/';
+	}
+
+	public function get_checkout_payment_url() {
+		return 'https://example.test/order-pay/' . $this->id . '/';
+	}
+
 	public function get_order_number() {
 		return (string) $this->id;
 	}
@@ -272,6 +314,12 @@ class WC_BlinkPay_Test_Order {
 	public function is_paid() {
 		return in_array( $this->status, array( 'processing', 'completed' ), true );
 	}
+
+	public function payment_complete( $transaction_id = '' ) {
+		$this->status                  = 'processing';
+		$this->meta['_transaction_id'] = $transaction_id;
+		return true;
+	}
 }
 
 require_once dirname( __DIR__ ) . '/includes/class-wc-blinkpay-gateway.php';
@@ -297,22 +345,31 @@ class WC_BlinkPay_Test_Gateway extends WC_BlinkPay_Gateway {
 }
 
 /**
- * An API client that records every create_quick_payment call and answers
- * from a queue of canned responses.
+ * An API client that records every call and answers from queues of canned
+ * responses. The retrieval queue repeats its final response, so one canned
+ * response can serve a whole polling loop.
  */
 class WC_BlinkPay_Fake_API_Client {
 
 	/** @var array[] Each entry: array( 'payload' => …, 'idempotency_key' => … ). */
 	public $create_calls = array();
 
+	/** @var string[] Quick payment IDs retrieved, in order. */
+	public $get_calls = array();
+
 	/** @var array */
-	private $responses;
+	private $create_responses;
+
+	/** @var array */
+	private $get_responses;
 
 	/**
-	 * @param array $responses Responses returned in order, one per create call.
+	 * @param array $create_responses Responses returned in order, one per create call.
+	 * @param array $get_responses    Responses returned in order per retrieval; the last repeats.
 	 */
-	public function __construct( array $responses ) {
-		$this->responses = $responses;
+	public function __construct( array $create_responses = array(), array $get_responses = array() ) {
+		$this->create_responses = $create_responses;
+		$this->get_responses    = $get_responses;
 	}
 
 	public function is_configured() {
@@ -325,6 +382,16 @@ class WC_BlinkPay_Fake_API_Client {
 			'idempotency_key' => $idempotency_key,
 		);
 
-		return array_shift( $this->responses );
+		return array_shift( $this->create_responses );
+	}
+
+	public function get_quick_payment( $quick_payment_id ) {
+		$this->get_calls[] = $quick_payment_id;
+
+		if ( ! $this->get_responses ) {
+			return new WP_Error( 'blinkpay_test', 'No canned retrieval response.' );
+		}
+
+		return count( $this->get_responses ) > 1 ? array_shift( $this->get_responses ) : $this->get_responses[0];
 	}
 }

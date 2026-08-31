@@ -248,14 +248,16 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	 * Handles the customer returning from the Blink gateway
 	 * (/wc-api/blinkpay_return/). Blink appends `cid` plus, on non-success,
 	 * a `status` of cancelled/rejected/timeout/error, or `pending` while the
-	 * outcome is unknown. A return with no `status` is not confirmation — the
-	 * consent must be checked through the API.
+	 * outcome is unknown. Neither direction is trusted on its own: a return
+	 * with no `status` is not confirmation, and a non-success `status` is
+	 * replayable from browser history, so the outcome is always confirmed
+	 * through the API before the order changes state.
 	 */
 	public function handle_return() {
 		// phpcs:disable WordPress.Security.NonceVerification.Recommended -- the order key authenticates this bank redirect.
 		$order_id = isset( $_GET['order_id'] ) ? absint( $_GET['order_id'] ) : 0;
 		$key      = isset( $_GET['key'] ) ? sanitize_text_field( wp_unslash( $_GET['key'] ) ) : '';
-		$status   = isset( $_GET['status'] ) ? sanitize_text_field( wp_unslash( $_GET['status'] ) ) : '';
+		$status   = isset( $_GET['status'] ) ? substr( sanitize_text_field( wp_unslash( $_GET['status'] ) ), 0, 32 ) : '';
 		// phpcs:enable
 
 		$order = wc_get_order( $order_id );
@@ -270,20 +272,25 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			exit;
 		}
 
-		// Any status other than blank or "pending" is a non-success outcome,
-		// including values this version does not recognise.
-		if ( '' !== $status && 'pending' !== $status ) {
+		// Any status other than blank or "pending" reports a non-success
+		// outcome, including values this version does not recognise. It is a
+		// hint, never terminal proof: a stale "cancelled" replayed from
+		// browser history must not fail an order whose debit is in flight.
+		$reported_failure = '' !== $status && 'pending' !== $status;
+		if ( $reported_failure ) {
 			/* translators: %s: gateway status parameter */
-			$this->fail_order( $order, sprintf( __( 'The customer did not complete the BlinkPay gateway journey (status: %s).', 'blinkpay-nz-for-woocommerce' ), $status ) );
-			wc_add_notice( __( 'Your payment was not completed and you have not been charged. Please try again.', 'blinkpay-nz-for-woocommerce' ), 'error' );
-			wp_safe_redirect( $order->get_checkout_payment_url() );
-			exit;
+			$order->add_order_note( sprintf( __( 'The customer returned from the BlinkPay gateway with status %s; confirming the outcome through the API.', 'blinkpay-nz-for-woocommerce' ), $status ) );
 		}
 
-		$this->confirm_quick_payment( $order );
+		$outcome = $this->confirm_quick_payment( $order );
 
-		if ( $order->has_status( 'failed' ) ) {
-			wc_add_notice( __( 'Your payment was not completed. Please try again.', 'blinkpay-nz-for-woocommerce' ), 'error' );
+		if ( 'failed' === $outcome ) {
+			wc_add_notice(
+				$reported_failure
+					? __( 'Your payment was not completed and you have not been charged. Please try again.', 'blinkpay-nz-for-woocommerce' )
+					: __( 'Your payment was not completed. Please try again.', 'blinkpay-nz-for-woocommerce' ),
+				'error'
+			);
 			wp_safe_redirect( $order->get_checkout_payment_url() );
 			exit;
 		}
@@ -421,7 +428,14 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		if ( ! $order
 			|| $this->id !== $order->get_payment_method()
 			|| $order->is_paid()
-			|| $order->has_status( array( 'failed', 'cancelled', 'refunded' ) ) ) {
+			|| $order->has_status( array( 'cancelled', 'refunded' ) ) ) {
+			return;
+		}
+
+		// A failed order whose quick payment may still be in flight is not
+		// abandoned: a debit initiated before the failure can still settle,
+		// and payment_complete() recovers the order to paid if it does.
+		if ( $order->has_status( 'failed' ) && ! $order->get_meta( '_blinkpay_quick_payment_id' ) ) {
 			return;
 		}
 
