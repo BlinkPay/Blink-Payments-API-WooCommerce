@@ -21,6 +21,13 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	const INLINE_POLL_ATTEMPTS = 5;
 	const INLINE_POLL_DELAY    = 2;
 
+	// How long the per-order confirmation lock may be held, in seconds. Sized
+	// above the return page's worst case — INLINE_POLL_ATTEMPTS requests at
+	// the API client's 30-second timeout plus the sleeps between them — so a
+	// slow but live confirmation is never barged in on, while a crashed
+	// holder's lock still expires within minutes.
+	const ORDER_LOCK_TIMEOUT = 180;
+
 	// Deferred WP-Cron checks: tiers of (number of checks, delay in seconds
 	// before each). Bank settlement is asynchronous — a payment initiated in
 	// the evening may not settle until the SBI operating window reopens the
@@ -328,6 +335,38 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	}
 
 	/**
+	 * Takes the per-order confirmation lock. WooCommerce has no order-level
+	 * locking primitive — payment_complete() validates only against the order
+	 * object already in memory — so a transient mutex serialises the two paths
+	 * that can complete or fail an order concurrently: the return page's
+	 * inline poll and the deferred cron check. When the transient store is the
+	 * options table, set_transient() on an absent key is an insert against a
+	 * unique index, so a lost race reports false here rather than both callers
+	 * proceeding.
+	 *
+	 * @param int $order_id The order ID.
+	 * @return bool Whether the lock was acquired.
+	 */
+	protected function acquire_order_lock( $order_id ) {
+		$key = 'wc_blinkpay_order_lock_' . $order_id;
+
+		if ( get_transient( $key ) ) {
+			return false;
+		}
+
+		return (bool) set_transient( $key, time(), self::ORDER_LOCK_TIMEOUT );
+	}
+
+	/**
+	 * Releases the per-order confirmation lock.
+	 *
+	 * @param int $order_id The order ID.
+	 */
+	protected function release_order_lock( $order_id ) {
+		delete_transient( 'wc_blinkpay_order_lock_' . $order_id );
+	}
+
+	/**
 	 * Handles the customer returning from the Blink gateway
 	 * (/wc-api/blinkpay_return/). Blink appends `cid` plus, on non-success,
 	 * a `status` of cancelled/rejected/timeout/error, or `pending` while the
@@ -355,6 +394,27 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			exit;
 		}
 
+		// The inline poll below holds the order for several seconds — ample
+		// time for a customer refresh or a due cron check to load the same
+		// order and complete it a second time — so confirmation runs under
+		// the per-order lock. A contended lock means another process owns
+		// the outcome: leave the order untouched and show its current state.
+		if ( ! $this->acquire_order_lock( $order_id ) ) {
+			wp_safe_redirect( $order->get_checkout_order_received_url() );
+			exit;
+		}
+
+		// Re-read now the lock is held: the snapshot above may predate a
+		// completion by the process that has just released the lock, and a
+		// stale failure applied over it would show a paid order as failed.
+		$order = wc_get_order( $order_id );
+
+		if ( ! $order || $order->is_paid() ) {
+			$this->release_order_lock( $order_id );
+			wp_safe_redirect( $order ? $order->get_checkout_order_received_url() : wc_get_checkout_url() );
+			exit;
+		}
+
 		// Any status other than blank or "pending" reports a non-success
 		// outcome, including values this version does not recognise. It is a
 		// hint, never terminal proof: a stale "cancelled" replayed from
@@ -366,6 +426,10 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		}
 
 		$outcome = $this->confirm_quick_payment( $order );
+
+		// Released before the redirect: exit does not unwind the stack, so
+		// anything after wp_safe_redirect() never runs.
+		$this->release_order_lock( $order_id );
 
 		if ( 'failed' === $outcome ) {
 			wc_add_notice(
@@ -598,7 +662,11 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 
 	/**
 	 * Schedules the order's next deferred status check, spaced according to
-	 * how many checks have already run.
+	 * how many checks have already run. The check-then-schedule here is not
+	 * atomic, but the callers that could race — the return page's poll and
+	 * the cron check — are serialised by the per-order lock, and WP core
+	 * itself refuses a duplicate single event within ten minutes of an
+	 * identical one, so one order cannot grow two parallel polling chains.
 	 *
 	 * @param WC_Order $order The order.
 	 * @return bool Whether a check is scheduled; false once the schedule is exhausted.
@@ -635,11 +703,36 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	}
 
 	/**
-	 * WP-Cron callback: re-checks a not-yet-terminal payment.
+	 * WP-Cron callback: re-checks a not-yet-terminal payment. Runs under the
+	 * per-order lock so it cannot complete or fail an order a return request
+	 * is confirming at the same moment. A contended lock defers to the
+	 * holder: the check is rescheduled without advancing the attempt counter,
+	 * because no check ran.
 	 *
 	 * @param int $order_id The order ID.
 	 */
 	public function check_payment_status( $order_id ) {
+		if ( ! $this->acquire_order_lock( $order_id ) ) {
+			$order = wc_get_order( $order_id );
+			if ( $order ) {
+				$this->schedule_status_check( $order );
+			}
+			return;
+		}
+
+		$this->run_status_check( $order_id );
+
+		$this->release_order_lock( $order_id );
+	}
+
+	/**
+	 * The body of a deferred status check. The caller holds the per-order
+	 * lock, so the order loaded here is a fresh read no concurrent
+	 * confirmation can move under us.
+	 *
+	 * @param int $order_id The order ID.
+	 */
+	private function run_status_check( $order_id ) {
 		$order = wc_get_order( $order_id );
 
 		if ( ! $order
