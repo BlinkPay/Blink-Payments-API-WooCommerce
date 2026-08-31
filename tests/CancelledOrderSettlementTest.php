@@ -239,5 +239,13 @@ class CancelledOrderSettlementTest extends TestCase {
 
 		$no_payment = $this->register_order( 610 );
 		$this->assertFalse( $gateway->has_unresolved_quick_payment( $no_payment ), 'An order that never reached the gateway has nothing in flight to protect.' );
+
+		// The check counter only advances when cron runs, so with cron dead
+		// it stays at 0 forever; the exemption is bounded by order age too,
+		// or every abandoned checkout would hold stock indefinitely.
+		$stalled = $this->register_order( 611 );
+		$stalled->update_meta_data( '_blinkpay_quick_payment_id', 'qp-611' );
+		$stalled->set_date_created( new DateTimeImmutable( '-37 hours' ) );
+		$this->assertFalse( $gateway->has_unresolved_quick_payment( $stalled ), 'An order older than the whole check schedule must not stay exempt on a stalled counter.' );
 	}
 }

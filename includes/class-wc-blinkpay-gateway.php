@@ -1012,14 +1012,40 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	 * (wc_cancel_unpaid_orders()) uses this to leave such orders alone: the
 	 * sweep's default 60-minute window is narrower than the check schedule,
 	 * and a payment settling after the sweep would land on a cancelled order.
+	 * The exemption is bounded by order age as well as the check counter,
+	 * because the counter only advances when cron actually runs: on a site
+	 * whose cron is dead it would otherwise exempt every order forever,
+	 * holding stock on abandoned checkouts indefinitely. An order without a
+	 * creation date cannot be age-bounded, so it is not exempted.
 	 *
 	 * @param WC_Order $order The order.
 	 * @return bool
 	 */
 	public function has_unresolved_quick_payment( $order ) {
+		$created = $order->get_date_created();
+
 		return $this->id === $order->get_payment_method()
 			&& '' !== (string) $order->get_meta( '_blinkpay_quick_payment_id' )
-			&& false !== $this->get_status_check_delay( (int) $order->get_meta( '_blinkpay_status_checks' ) );
+			&& false !== $this->get_status_check_delay( (int) $order->get_meta( '_blinkpay_status_checks' ) )
+			&& null !== $created
+			&& time() - $created->getTimestamp() < $this->status_check_schedule_span();
+	}
+
+	/**
+	 * The total span of the deferred-check schedule in seconds — 36 hours —
+	 * after which no check can still be outstanding for an order created at
+	 * its start.
+	 *
+	 * @return int
+	 */
+	private function status_check_schedule_span() {
+		$span = 0;
+		foreach ( self::STATUS_CHECK_SCHEDULE as $tier ) {
+			list( $checks, $delay ) = $tier;
+			$span += $checks * $delay;
+		}
+
+		return $span;
 	}
 
 	/**

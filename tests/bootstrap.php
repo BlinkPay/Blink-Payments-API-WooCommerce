@@ -376,8 +376,20 @@ class WC_BlinkPay_Test_Order {
 	/** @var float */
 	private $total = 49.95;
 
+	/** @var DateTimeImmutable|null */
+	private $date_created;
+
 	public function __construct( $id ) {
-		$this->id = $id;
+		$this->id           = $id;
+		$this->date_created = new DateTimeImmutable();
+	}
+
+	public function get_date_created() {
+		return $this->date_created;
+	}
+
+	public function set_date_created( $date_created ) {
+		$this->date_created = $date_created;
 	}
 
 	public function get_id() {
