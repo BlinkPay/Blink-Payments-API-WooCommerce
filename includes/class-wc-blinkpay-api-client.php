@@ -72,7 +72,7 @@ class WC_BlinkPay_API_Client {
 	 * @return string
 	 */
 	private function token_cache_key() {
-		return 'wc_blinkpay_token_' . md5( ( $this->sandbox ? 'sandbox' : 'production' ) . '|' . $this->client_id );
+		return 'wc_blinkpay_token_' . hash( 'sha256', ( $this->sandbox ? 'sandbox' : 'production' ) . '|' . $this->client_id );
 	}
 
 	/**
