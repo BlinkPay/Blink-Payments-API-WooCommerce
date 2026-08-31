@@ -4,7 +4,7 @@ Tags: woocommerce, payment gateway, open banking, new zealand, bank payments
 Requires at least: 6.0
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.0.4
+Stable tag: 1.1.0
 License: MIT
 License URI: https://opensource.org/licenses/MIT
 
@@ -102,6 +102,18 @@ Yes. The `wc_blinkpay_quick_payment_payload` filter modifies the quick payment r
 
 == Changelog ==
 
+= 1.1.0 =
+* Confirm every gateway return through the API before failing an order, so a stale failure status replayed from browser history cannot fail an in-flight payment.
+* Verify the paid amount against the order total before completing an order, and record the amount actually charged and any BlinkPay surcharge for reconciliation.
+* Serialise order completion under a per-order lock, so a customer refresh and the scheduled status check cannot complete an order twice or overwrite a paid order.
+* Schedule the deferred status check as soon as the payment is created, and back polling off progressively across the 36-hour settlement window.
+* Choose the refund type from how the payment settled, hide WooCommerce's manual refund button on BlinkPay orders, and offer refunds only when the credentials carry the refund permissions.
+* Scope idempotency keys to the payment attempt, so a retried checkout creates a fresh payment.
+* Show the callback URL in the gateway settings, and name redirect-URI whitelisting as the likely cause when payment creation is rejected.
+* Send the order ID as the PCR code for exact reconciliation, and derive the hashed customer identifier from the customer ID — omitted entirely when no per-customer value exists.
+* Distinguish a customer-declined consent from a bank-rejected payment in the order notes.
+* Send the OAuth token request in the documented form encoding, and correct the checkout copy for merchant accounts with card payments enabled.
+
 = 1.0.4 =
 * Use SHA-256 instead of MD5 for the access-token cache key.
 
@@ -114,6 +126,9 @@ Yes. The `wc_blinkpay_quick_payment_payload` filter modifies the quick payment r
 * Initial release: Blink PayNow quick payments, account-number refunds, classic and block checkout support, HPOS compatibility.
 
 == Upgrade Notice ==
+
+= 1.1.0 =
+Safer payment confirmation: API-confirmed outcomes, duplicate-completion protection, paid-amount verification, surcharge recording, smarter refunds and clearer failure notes.
 
 = 1.0.3 =
 Plugin renamed to BlinkPay NZ for WooCommerce.
