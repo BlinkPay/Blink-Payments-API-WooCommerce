@@ -21,12 +21,16 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	const INLINE_POLL_ATTEMPTS = 5;
 	const INLINE_POLL_DELAY    = 2;
 
-	// How long the per-order lock may be held, in seconds. Sized above the
-	// worst-case holder — the account-number refund path's create plus
-	// INLINE_POLL_ATTEMPTS retrievals at the API client's 30-second timeout,
-	// plus the pauses between them — so a slow but live operation is never
-	// barged in on, while a crashed holder's lock is broken by the next
-	// acquirer within minutes.
+	// How long the per-order lock may be held, in seconds, before another
+	// process may break it. Sized above the worst-case holder — the
+	// account-number refund path's create plus INLINE_POLL_ATTEMPTS
+	// retrievals at the API client's 30-second timeout, plus the pauses
+	// between them — so a slow but live operation is never barged in on,
+	// while a crashed holder's lock is broken by the next acquirer within
+	// minutes. A holder that does overrun (payment_complete() sends order
+	// emails synchronously, so a slow mail relay stretches the budget) loses
+	// only its own lock: release is token-checked, so it can never free a
+	// successor's.
 	const ORDER_LOCK_TIMEOUT = 300;
 
 	// How soon a deferred check that lost the lock retries. No check ran, so
@@ -271,7 +275,8 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			return array( 'result' => 'failure' );
 		}
 
-		if ( ! $this->acquire_order_lock( $order_id ) ) {
+		$lock = $this->acquire_order_lock( $order_id );
+		if ( ! $lock ) {
 			wc_add_notice( __( 'Another BlinkPay operation on this order is already in progress. Please wait a moment, then check the order status before paying again.', 'blinkpay-nz-for-woocommerce' ), 'error' );
 			return array( 'result' => 'failure' );
 		}
@@ -281,7 +286,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		$order = wc_get_order( $order_id );
 
 		if ( ! $order || $order->is_paid() ) {
-			$this->release_order_lock( $order_id );
+			$this->release_order_lock( $order_id, $lock );
 			return array(
 				'result'   => 'success',
 				'redirect' => $order ? $order->get_checkout_order_received_url() : wc_get_checkout_url(),
@@ -293,7 +298,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			$result = $this->start_quick_payment( $order );
 		}
 
-		$this->release_order_lock( $order_id );
+		$this->release_order_lock( $order_id, $lock );
 
 		return $result;
 	}
@@ -445,34 +450,119 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	 * object already in memory — and transients cannot back one: on the
 	 * options-table backend set_transient() is a non-atomic existence check
 	 * before an insert-or-update, and under a persistent object cache it is an
-	 * unconditional overwrite, so two racers would both acquire.
-	 * WP_Upgrader::create_lock() is atomic on both — an INSERT IGNORE straight
-	 * into the options table, where the unique key on option_name makes the
-	 * loser's insert affect no rows — and it breaks a lock older than the
-	 * timeout, so a crashed holder cannot jam the order for good.
+	 * unconditional overwrite, so two racers would both acquire. The lock is
+	 * therefore an INSERT IGNORE straight into the options table, where the
+	 * unique key on option_name makes the loser's insert affect no rows,
+	 * atomically, regardless of any object cache — the technique of
+	 * WP_Upgrader::create_lock(), inlined so the front end and cron need not
+	 * load wp-admin's upgrader. A lock older than ORDER_LOCK_TIMEOUT is
+	 * broken, so a crashed holder cannot jam the order for good, and the
+	 * stored value is an ownership token whose leading digits are the
+	 * acquisition time.
 	 *
 	 * @param int $order_id The order ID.
-	 * @return bool Whether the lock was acquired.
+	 * @return string|false The token to pass to release_order_lock(), or
+	 *                      false when another process holds the lock.
 	 */
 	protected function acquire_order_lock( $order_id ) {
-		if ( ! class_exists( 'WP_Upgrader' ) ) {
-			require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
+		$token = time() . ':' . wp_generate_uuid4();
+
+		if ( $this->insert_order_lock( $order_id, $token ) ) {
+			return $token;
 		}
 
-		return WP_Upgrader::create_lock( 'wc_blinkpay_order_' . $order_id, self::ORDER_LOCK_TIMEOUT );
+		// The holder may have crashed: break the lock if it has expired — the
+		// token-checked delete cannot break a fresh lock that has replaced it
+		// — then contend once more for the freed slot.
+		$held = $this->read_order_lock( $order_id );
+		if ( false !== $held && (int) $held <= time() - self::ORDER_LOCK_TIMEOUT ) {
+			$this->delete_order_lock( $order_id, $held );
+
+			if ( $this->insert_order_lock( $order_id, $token ) ) {
+				return $token;
+			}
+		}
+
+		return false;
 	}
 
 	/**
-	 * Releases the per-order lock.
+	 * Releases the per-order lock — but only the caller's own: the
+	 * token-checked delete means a holder whose expired lock was broken and
+	 * re-acquired by another process cannot free that successor's lock.
 	 *
-	 * @param int $order_id The order ID.
+	 * @param int    $order_id The order ID.
+	 * @param string $token    The token acquire_order_lock() returned.
 	 */
-	protected function release_order_lock( $order_id ) {
-		if ( ! class_exists( 'WP_Upgrader' ) ) {
-			require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
-		}
+	protected function release_order_lock( $order_id, $token ) {
+		$this->delete_order_lock( $order_id, $token );
+	}
 
-		WP_Upgrader::release_lock( 'wc_blinkpay_order_' . $order_id );
+	/**
+	 * @param int $order_id The order ID.
+	 * @return string The lock's option name.
+	 */
+	private function order_lock_option( $order_id ) {
+		return 'wc_blinkpay_order_' . $order_id . '.lock';
+	}
+
+	/**
+	 * Inserts the lock row. Exactly one of any number of concurrent inserts
+	 * affects a row; the rest are ignored by the unique key on option_name.
+	 *
+	 * @param int    $order_id The order ID.
+	 * @param string $token    The ownership token to store.
+	 * @return bool Whether this caller's insert won.
+	 */
+	private function insert_order_lock( $order_id, $token ) {
+		global $wpdb;
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery -- the point of the lock: get_option()/add_option() cannot contend atomically.
+		return (bool) $wpdb->query(
+			$wpdb->prepare(
+				"INSERT IGNORE INTO {$wpdb->options} ( option_name, option_value, autoload ) VALUES ( %s, %s, 'no' )",
+				$this->order_lock_option( $order_id ),
+				$token
+			)
+		);
+	}
+
+	/**
+	 * @param int $order_id The order ID.
+	 * @return string|false The held token, or false when the lock is free.
+	 */
+	private function read_order_lock( $order_id ) {
+		global $wpdb;
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery -- read straight from the table, past any stale object cache.
+		$value = $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT option_value FROM {$wpdb->options} WHERE option_name = %s",
+				$this->order_lock_option( $order_id )
+			)
+		);
+
+		return null === $value ? false : $value;
+	}
+
+	/**
+	 * Deletes the lock row only while it still holds the given token, as one
+	 * atomic compare-and-delete.
+	 *
+	 * @param int    $order_id The order ID.
+	 * @param string $token    The token the row must still hold.
+	 */
+	private function delete_order_lock( $order_id, $token ) {
+		global $wpdb;
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery -- delete_option() cannot compare-and-delete.
+		$wpdb->query(
+			$wpdb->prepare(
+				"DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value = %s",
+				$this->order_lock_option( $order_id ),
+				$token
+			)
+		);
 	}
 
 	/**
@@ -517,7 +607,8 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		// order and complete it a second time — so confirmation runs under
 		// the per-order lock. A contended lock means another process owns
 		// the outcome: leave the order untouched and show its current state.
-		if ( ! $this->acquire_order_lock( $order_id ) ) {
+		$lock = $this->acquire_order_lock( $order_id );
+		if ( ! $lock ) {
 			wp_safe_redirect( $order->get_checkout_order_received_url() );
 			exit;
 		}
@@ -528,7 +619,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		$order = wc_get_order( $order_id );
 
 		if ( ! $order || $order->is_paid() ) {
-			$this->release_order_lock( $order_id );
+			$this->release_order_lock( $order_id, $lock );
 			wp_safe_redirect( $order ? $order->get_checkout_order_received_url() : wc_get_checkout_url() );
 			exit;
 		}
@@ -547,7 +638,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 
 		// Released before the redirect: exit does not unwind the stack, so
 		// anything after wp_safe_redirect() never runs.
-		$this->release_order_lock( $order_id );
+		$this->release_order_lock( $order_id, $lock );
 
 		if ( 'failed' === $outcome ) {
 			// Keyed off the API-confirmed outcome, not the replayable URL
@@ -934,7 +1025,8 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	 * @param int $order_id The order ID.
 	 */
 	public function check_payment_status( $order_id ) {
-		if ( ! $this->acquire_order_lock( $order_id ) ) {
+		$lock = $this->acquire_order_lock( $order_id );
+		if ( ! $lock ) {
 			if ( ! wp_next_scheduled( self::STATUS_CHECK_HOOK, array( $order_id ) ) ) {
 				wp_schedule_single_event( time() + self::ORDER_LOCK_RETRY_DELAY, self::STATUS_CHECK_HOOK, array( $order_id ) );
 			}
@@ -943,7 +1035,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 
 		$this->run_status_check( $order_id );
 
-		$this->release_order_lock( $order_id );
+		$this->release_order_lock( $order_id, $lock );
 	}
 
 	/**
@@ -1049,13 +1141,14 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		// — an admin retrying after a proxy timeout, or two admins acting at
 		// once — must be blocked here, by the same per-order lock that
 		// serialises order completion.
-		if ( ! $this->acquire_order_lock( $order->get_id() ) ) {
+		$lock = $this->acquire_order_lock( $order->get_id() );
+		if ( ! $lock ) {
 			return new WP_Error( 'blinkpay_refund_failed', __( 'Another BlinkPay operation on this order is still in progress. Check the order notes and the BlinkPay merchant portal for the outcome of the previous request before retrying the refund.', 'blinkpay-nz-for-woocommerce' ) );
 		}
 
 		$result = $this->execute_refund( $order, $payment_id, $amount, $reason );
 
-		$this->release_order_lock( $order->get_id() );
+		$this->release_order_lock( $order->get_id(), $lock );
 
 		return $result;
 	}

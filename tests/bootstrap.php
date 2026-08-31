@@ -170,41 +170,57 @@ function is_wp_error( $thing ) {
 }
 
 /**
- * The slice of WP_Upgrader the gateway uses: the option-backed lock. Mirrors
- * core's semantics — the INSERT IGNORE is modelled as one indivisible
- * insert-if-absent, a held lock older than the timeout is broken and
- * re-acquired, and releasing deletes the option.
+ * The slice of wpdb the gateway's per-order lock uses. The queries are the
+ * lock's three fixed shapes; the stub parses the option name and value out of
+ * them and models INSERT IGNORE as one indivisible insert-if-absent over the
+ * recorded options, mirroring the unique key on option_name, and DELETE as an
+ * atomic compare-and-delete.
  */
-class WP_Upgrader {
+class WC_BlinkPay_Test_WPDB {
 
-	public static function create_lock( $lock_name, $release_timeout = null ) {
-		if ( ! $release_timeout ) {
-			$release_timeout = 3600;
+	/** @var string */
+	public $options = 'wp_options';
+
+	public function prepare( $query, ...$args ) {
+		foreach ( $args as $arg ) {
+			$query = preg_replace( '/%s/', "'" . $arg . "'", $query, 1 );
 		}
-
-		$lock_option = $lock_name . '.lock';
-
-		if ( isset( $GLOBALS['wc_blinkpay_options'][ $lock_option ] ) ) {
-			$held_since = get_option( $lock_option );
-
-			if ( $held_since > ( time() - $release_timeout ) ) {
-				return false;
-			}
-
-			self::release_lock( $lock_name );
-
-			return self::create_lock( $lock_name, $release_timeout );
-		}
-
-		update_option( $lock_option, time(), false );
-
-		return true;
+		return $query;
 	}
 
-	public static function release_lock( $lock_name ) {
-		return delete_option( $lock_name . '.lock' );
+	public function query( $query ) {
+		if ( preg_match( "/^INSERT IGNORE INTO \S+ \( option_name, option_value, autoload \) VALUES \( '([^']+)', '([^']+)', 'no' \)$/", $query, $matches ) ) {
+			if ( isset( $GLOBALS['wc_blinkpay_options'][ $matches[1] ] ) ) {
+				return 0;
+			}
+			$GLOBALS['wc_blinkpay_options'][ $matches[1] ] = $matches[2];
+			return 1;
+		}
+
+		if ( preg_match( "/^DELETE FROM \S+ WHERE option_name = '([^']+)' AND option_value = '([^']+)'$/", $query, $matches ) ) {
+			if ( isset( $GLOBALS['wc_blinkpay_options'][ $matches[1] ] )
+				&& (string) $GLOBALS['wc_blinkpay_options'][ $matches[1] ] === $matches[2] ) {
+				unset( $GLOBALS['wc_blinkpay_options'][ $matches[1] ] );
+				return 1;
+			}
+			return 0;
+		}
+
+		throw new RuntimeException( 'Unexpected test wpdb query: ' . $query );
+	}
+
+	public function get_var( $query ) {
+		if ( preg_match( "/^SELECT option_value FROM \S+ WHERE option_name = '([^']+)'$/", $query, $matches ) ) {
+			return isset( $GLOBALS['wc_blinkpay_options'][ $matches[1] ] )
+				? (string) $GLOBALS['wc_blinkpay_options'][ $matches[1] ]
+				: null;
+		}
+
+		throw new RuntimeException( 'Unexpected test wpdb query: ' . $query );
 	}
 }
+
+$GLOBALS['wpdb'] = new WC_BlinkPay_Test_WPDB();
 
 class WP_Error {
 

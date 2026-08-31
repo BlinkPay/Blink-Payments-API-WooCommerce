@@ -6,9 +6,11 @@
  * owns the outcome: the return page shows the order as it stands, and the
  * cron check reschedules itself without advancing the attempt counter.
  *
- * BDL-1630: acquisition is atomic — backed by WP_Upgrader::create_lock() —
- * so exactly one of two concurrent callers acquires, and a double-submitted
- * refund loses the race instead of refunding the customer twice.
+ * BDL-1630/BDL-1634: acquisition is atomic — an INSERT IGNORE against the
+ * options table's unique key — so exactly one of two concurrent callers
+ * acquires, and a double-submitted refund loses the race instead of
+ * refunding the customer twice. Release is token-checked, so a holder that
+ * overran the timeout can never free its successor's lock.
  *
  * @package blinkpay-nz-for-woocommerce
  */
@@ -45,8 +47,8 @@ class WC_BlinkPay_Lock_Probe_Gateway extends WC_BlinkPay_Test_Gateway {
 		return $this->acquire_order_lock( $order_id );
 	}
 
-	public function release( $order_id ) {
-		$this->release_order_lock( $order_id );
+	public function release( $order_id, $token ) {
+		$this->release_order_lock( $order_id, $token );
 	}
 }
 
@@ -135,7 +137,7 @@ class ConcurrencyGuardTest extends TestCase {
 	 * @param int $order_id The order ID.
 	 */
 	private function hold_order_lock( $order_id ) {
-		WP_Upgrader::create_lock( 'wc_blinkpay_order_' . $order_id, WC_BlinkPay_Gateway::ORDER_LOCK_TIMEOUT );
+		update_option( 'wc_blinkpay_order_' . $order_id . '.lock', time() . ':held-by-another-process' );
 	}
 
 	/**
@@ -337,21 +339,39 @@ class ConcurrencyGuardTest extends TestCase {
 		$first  = new WC_BlinkPay_Lock_Probe_Gateway( new WC_BlinkPay_Fake_API_Client() );
 		$second = new WC_BlinkPay_Lock_Probe_Gateway( new WC_BlinkPay_Fake_API_Client() );
 
-		$this->assertTrue( $first->acquire( 408 ) );
+		$token = $first->acquire( 408 );
+		$this->assertNotFalse( $token );
 		$this->assertFalse( $second->acquire( 408 ), 'The lock is held: the loser must be told, not silently overwrite the winner.' );
 
-		$first->release( 408 );
+		$first->release( 408, $token );
 
-		$this->assertTrue( $second->acquire( 408 ), 'A released lock must be acquirable again.' );
+		$this->assertNotFalse( $second->acquire( 408 ), 'A released lock must be acquirable again.' );
 	}
 
 	public function test_a_crashed_holders_expired_lock_is_broken_and_reacquired() {
 		$gateway = new WC_BlinkPay_Lock_Probe_Gateway( new WC_BlinkPay_Fake_API_Client() );
 
 		// A holder that crashed before releasing, longer ago than the timeout.
-		update_option( 'wc_blinkpay_order_409.lock', time() - WC_BlinkPay_Gateway::ORDER_LOCK_TIMEOUT - 1 );
+		update_option( 'wc_blinkpay_order_409.lock', ( time() - WC_BlinkPay_Gateway::ORDER_LOCK_TIMEOUT - 1 ) . ':crashed-holder' );
 
-		$this->assertTrue( $gateway->acquire( 409 ), 'An expired lock means a crashed holder: it must be broken, not respected for good.' );
+		$this->assertNotFalse( $gateway->acquire( 409 ), 'An expired lock means a crashed holder: it must be broken, not respected for good.' );
+	}
+
+	public function test_an_overrunning_holders_release_cannot_free_the_successors_lock() {
+		$overrunner = new WC_BlinkPay_Lock_Probe_Gateway( new WC_BlinkPay_Fake_API_Client() );
+		$successor  = new WC_BlinkPay_Lock_Probe_Gateway( new WC_BlinkPay_Fake_API_Client() );
+
+		// The overrunner acquired longer ago than the timeout and is still
+		// mid-operation when the successor breaks its expired lock.
+		$stale_token = ( time() - WC_BlinkPay_Gateway::ORDER_LOCK_TIMEOUT - 1 ) . ':overrunner';
+		update_option( 'wc_blinkpay_order_412.lock', $stale_token );
+
+		$successor_token = $successor->acquire( 412 );
+		$this->assertNotFalse( $successor_token, 'The expired lock must be broken and re-acquired.' );
+
+		$overrunner->release( 412, $stale_token );
+
+		$this->assertSame( $successor_token, get_option( 'wc_blinkpay_order_412.lock' ), 'The overrunner may only release its own lock, never the successor\'s.' );
 	}
 
 	public function test_a_refund_double_submission_loses_the_race_and_creates_no_second_refund() {

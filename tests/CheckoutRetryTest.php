@@ -257,7 +257,7 @@ class CheckoutRetryTest extends TestCase {
 		$order = $this->register_order( 706 );
 		$order->update_meta_data( '_blinkpay_quick_payment_id', 'qp-706' );
 
-		WP_Upgrader::create_lock( 'wc_blinkpay_order_706', WC_BlinkPay_Gateway::ORDER_LOCK_TIMEOUT );
+		update_option( 'wc_blinkpay_order_706.lock', time() . ':held-by-another-process' );
 
 		$client  = new WC_BlinkPay_Fake_API_Client();
 		$gateway = new WC_BlinkPay_Test_Gateway( $client );
