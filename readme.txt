@@ -117,6 +117,7 @@ Yes. The `wc_blinkpay_quick_payment_payload` filter modifies the quick payment r
 * Run refunds under the per-order lock, refusing a second submission while one is in flight, and reject manual money-carrying refunds server-side rather than only hiding the button.
 * Refund a surcharged payment as a partial for the exact amount requested.
 * Keep orders still awaiting a payment outcome out of WooCommerce's unpaid-order cancellation, and surface a payment that settles after its order was cancelled by parking the order on hold with a prominent note instead of discarding the payment silently.
+* Confirm an order's existing quick payment before a retried checkout can create another, so a customer who authorised at their bank but never returned to the site cannot be debited twice.
 
 = 1.0.4 =
 * Use SHA-256 instead of MD5 for the access-token cache key.

@@ -47,6 +47,8 @@ The return redirect alone is never treated as proof of payment — the outcome i
 
 Orders still awaiting an outcome are protected from WooCommerce's unpaid-order cancellation (`wc_cancel_unpaid_orders()`), whose default 60-minute stock-hold window is narrower than the check schedule: the first unresolved deferred check parks the order **On hold**, and the `woocommerce_cancel_unpaid_order` filter keeps the sweep off orders whose checks remain. Should a payment still settle after its order was cancelled — an admin cancelling manually, say — the order is parked **On hold** with a prominent note rather than the payment being discarded silently.
 
+A retried checkout — the order-pay link stays live while an order is pending — confirms the order's existing quick payment through the API before creating anything: a live or settling debit blocks a second creation, a settled one completes the order, and a fresh quick payment is only created once the previous attempt is confirmed terminal with no money moved.
+
 Before completing, the paid amount is verified against the order total — the quick payment payload is filterable by third-party code, so the gateway checks what it was actually paid. A completed payment whose amount differs from the order total in either direction parks the order **On hold** with a note naming both amounts (flagged once, not per poll). What the customer was actually charged is recorded on the order: with surcharging enabled for the merchant account, Blink adds the surcharge on the hosted gateway (the customer sees and authorises the combined amount there), and the plugin stores `total_charge` and `surcharge` as metadata with a reconciliation note.
 
 ### Access tokens

@@ -41,15 +41,24 @@ class IdempotencyKeyTest extends TestCase {
 					'quick_payment_id' => 'qp-second',
 					'redirect_uri'     => 'https://gateway.test/pay/qp-second',
 				),
+			),
+			array(
+				// The retry first confirms the previous attempt through the
+				// API; only its rejection makes a second creation safe.
+				array(
+					'consent' => array(
+						'status'   => 'Rejected',
+						'payments' => array(),
+					),
+				),
 			)
 		);
 		$gateway = new WC_BlinkPay_Test_Gateway( $client );
 
 		$gateway->process_payment( 201 );
 
-		// The customer cancels at the gateway and the order is failed, then
-		// they retry checkout on the same order.
-		$order->update_status( 'failed', 'The customer did not complete the BlinkPay gateway journey.' );
+		// The customer cancels at the gateway — the API reports the consent
+		// Rejected — then they retry checkout on the same order.
 		$result = $gateway->process_payment( 201 );
 
 		$this->assertCount( 2, $client->create_calls );

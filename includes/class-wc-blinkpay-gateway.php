@@ -266,7 +266,76 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			return array( 'result' => 'failure' );
 		}
 
+		$resumption = $this->resume_existing_quick_payment( $order );
+		if ( null !== $resumption ) {
+			return $resumption;
+		}
+
 		return $this->start_quick_payment( $order );
+	}
+
+	/**
+	 * Resolves a retried checkout against the order's existing quick payment
+	 * before any new one may be created. The order-pay link stays live while
+	 * the order is pending, so a customer who authorised at their bank but
+	 * never returned to the site can pay the same order again; a stored quick
+	 * payment ID means a debit may already be in flight, and it is only safe
+	 * to create a fresh payment once the previous attempt is confirmed
+	 * terminal with no money moved. Confirmation runs under the per-order
+	 * lock, like every other path that can complete or fail the order.
+	 *
+	 * @param WC_Order $order The order.
+	 * @return array|null A process_payment() result, or null when no quick
+	 *                    payment exists or the previous one ended with no
+	 *                    money moved, so a fresh payment may be created.
+	 */
+	private function resume_existing_quick_payment( $order ) {
+		$order_id = $order->get_id();
+
+		if ( ! $order->get_meta( '_blinkpay_quick_payment_id' ) ) {
+			return null;
+		}
+
+		if ( ! $this->acquire_order_lock( $order_id ) ) {
+			wc_add_notice( __( 'Another BlinkPay operation on this order is already in progress. Please wait a moment, then check the order status before paying again.', 'blinkpay-nz-for-woocommerce' ), 'error' );
+			return array( 'result' => 'failure' );
+		}
+
+		// Re-read now the lock is held, as on the return page: the snapshot
+		// above may predate a completion by the previous lock holder.
+		$order = wc_get_order( $order_id );
+
+		if ( ! $order || $order->is_paid() ) {
+			$this->release_order_lock( $order_id );
+			return array(
+				'result'   => 'success',
+				'redirect' => $order ? $order->get_checkout_order_received_url() : wc_get_checkout_url(),
+			);
+		}
+
+		$outcome = $this->confirm_quick_payment( $order );
+
+		$this->release_order_lock( $order_id );
+
+		if ( 'paid' === $outcome ) {
+			return array(
+				'result'   => 'success',
+				'redirect' => $order->get_checkout_order_received_url(),
+			);
+		}
+
+		if ( 'pending' === $outcome ) {
+			// The debit may still settle — confirm_quick_payment() has parked
+			// the order and scheduled the deferred checks — so no second
+			// payment may be created for it.
+			wc_add_notice( __( 'A payment for this order is already awaiting confirmation from your bank, so a new payment has not been started. The order will update automatically once the outcome is known.', 'blinkpay-nz-for-woocommerce' ), 'error' );
+			return array( 'result' => 'failure' );
+		}
+
+		// The previous attempt is confirmed terminal with no money moved — a
+		// rejected, revoked or timed-out consent, or a bank-rejected payment
+		// — so a fresh quick payment is safe to create over it.
+		return null;
 	}
 
 	/**
