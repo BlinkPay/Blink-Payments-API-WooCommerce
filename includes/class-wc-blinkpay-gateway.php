@@ -375,6 +375,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		$order->delete_meta_data( '_blinkpay_accepted_reason' );
 		$order->delete_meta_data( '_blinkpay_status_checks' );
 		$order->delete_meta_data( '_blinkpay_amount_mismatch_flagged' );
+		$order->delete_meta_data( '_blinkpay_lock_retries' );
 		$order->save();
 	}
 

@@ -158,11 +158,13 @@ class CheckoutRetryTest extends TestCase {
 		$order = $this->register_order( 708 );
 		$order->update_meta_data( '_blinkpay_quick_payment_id', 'qp-708' );
 		// Everything the rejected first attempt left behind: its payment ID,
-		// how it settled, an exhausted check counter and a mismatch flag.
+		// how it settled, an exhausted check counter, a mismatch flag and an
+		// exhausted contended-lock retry counter.
 		$order->update_meta_data( '_blinkpay_payment_id', 'pay-old-rejected' );
 		$order->update_meta_data( '_blinkpay_accepted_reason', 'card_network_accepted' );
 		$order->update_meta_data( '_blinkpay_status_checks', 45 );
 		$order->update_meta_data( '_blinkpay_amount_mismatch_flagged', 'yes' );
+		$order->update_meta_data( '_blinkpay_lock_retries', WC_BlinkPay_Gateway::ORDER_LOCK_MAX_RETRIES + 1 );
 
 		$client  = new WC_BlinkPay_Fake_API_Client(
 			array(
@@ -182,6 +184,7 @@ class CheckoutRetryTest extends TestCase {
 		$this->assertSame( '', $order->get_meta( '_blinkpay_accepted_reason' ) );
 		$this->assertSame( '', $order->get_meta( '_blinkpay_status_checks' ), 'An exhausted counter would deny the new debit its deferred checks.' );
 		$this->assertSame( '', $order->get_meta( '_blinkpay_amount_mismatch_flagged' ) );
+		$this->assertSame( '', $order->get_meta( '_blinkpay_lock_retries' ), 'An exhausted retry counter would kill the fresh attempt\'s polling on its first contended check.' );
 		$this->assertCount( 1, $GLOBALS['wc_blinkpay_scheduled_events'], 'The fresh attempt must get its own deferred checks.' );
 	}
 
