@@ -24,6 +24,44 @@ jobs:
       - name: Lint PHP files
         run: find . -name '*.php' -not -path './.git/*' -print0 | xargs -0 -n1 php -l
 
+  snyk:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # The plugin has no Composer dependencies, so Snyk Open Source has no
+      # manifest to scan; Snyk Code (static analysis) is what applies here.
+      - name: Run Snyk Code to check for vulnerabilities
+        uses: snyk/actions/php@master
+        with:
+          command: code test
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          SNYK_ORG: blinkpay-zw9
+          SNYK_PROJECT_NAME: blinkpay-nz-for-woocommerce
+        continue-on-error: true
+
+  sonar:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Sonar needs full history to attribute issues and measure new code.
+          fetch-depth: 0
+      - name: Run Sonar
+        uses: sonarsource/sonarqube-scan-action@v5
+        with:
+          args: >
+            -Dsonar.projectKey=blinkpay-nz-for-woocommerce
+            -Dsonar.organization=blinkpay
+            -Dsonar.sources=.
+            -Dsonar.exclusions=assets/images/**,.github/**
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+        continue-on-error: true
+
   package:
     needs: lint
     runs-on: ubuntu-latest
