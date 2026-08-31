@@ -248,4 +248,20 @@ class CancelledOrderSettlementTest extends TestCase {
 		$stalled->set_date_created( new DateTimeImmutable( '-37 hours' ) );
 		$this->assertFalse( $gateway->has_unresolved_quick_payment( $stalled ), 'An order older than the whole check schedule must not stay exempt on a stalled counter.' );
 	}
+
+	public function test_a_wrong_amount_settling_on_a_cancelled_order_still_raises_the_cancellation_warning() {
+		$order = $this->register_order( 612 );
+		$order->update_meta_data( '_blinkpay_quick_payment_id', 'qp-612' );
+		$order->update_status( 'cancelled' );
+
+		// The order stub's total is 49.95; the payment settled for 10.00.
+		$client  = new WC_BlinkPay_Fake_API_Client( array(), array( $this->consent_with_settled_payment( 'pay-612', '10.00' ) ) );
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		$gateway->check_payment_status( 612 );
+
+		$this->assertTrue( $order->has_status( 'on-hold' ) );
+		$this->assertSame( 'yes', $order->get_meta( '_blinkpay_settled_after_cancellation' ), 'The merchant must be told the money moved after cancellation, whatever the amount.' );
+		$this->assertStringContainsString( 'after this order had already been cancelled', implode( ' ', $order->notes ) );
+	}
 }

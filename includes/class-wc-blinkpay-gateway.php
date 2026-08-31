@@ -842,19 +842,22 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		if ( 'AcceptedSettlementCompleted' === $status ) {
 			$amount = isset( $payment['detail']['amount'] ) && is_array( $payment['detail']['amount'] ) ? $payment['detail']['amount'] : array();
 
-			if ( ! $this->is_amount_verified( $order, $amount ) ) {
-				$this->flag_amount_mismatch( $order, $payment_id, $amount );
-				return 'pending';
-			}
-
 			// A payment settling after its order was cancelled — or an order
 			// already flagged as such — is surfaced for the merchant, never
 			// completed automatically: WooCommerce released any held stock at
 			// cancellation, so completing would claim goods the shop may no
-			// longer have.
+			// longer have. Checked before the amount: whatever was paid, the
+			// money moved after cancellation, and that warning must not be
+			// hidden behind a mismatch flag that would also re-fail on every
+			// later poll.
 			if ( $order->has_status( 'cancelled' ) || $order->get_meta( '_blinkpay_settled_after_cancellation' ) ) {
 				$this->flag_settled_payment_on_cancelled_order( $order, $payment, $amount );
 				return 'paid';
+			}
+
+			if ( ! $this->is_amount_verified( $order, $amount ) ) {
+				$this->flag_amount_mismatch( $order, $payment_id, $amount );
+				return 'pending';
 			}
 
 			if ( ! empty( $payment['accepted_reason'] ) ) {
