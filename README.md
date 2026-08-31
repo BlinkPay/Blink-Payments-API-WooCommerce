@@ -74,7 +74,10 @@ WooCommerce's own **Refund manually** button is hidden on BlinkPay orders and, m
 | `_blinkpay_accepted_reason` | How the payment settled (`source_bank_payment_sent` or `card_network_accepted`); selects the refund path |
 | `_blinkpay_total_charge` | The amount actually charged to the customer (`total_charge`, order total plus any surcharge) |
 | `_blinkpay_surcharge` | The surcharge Blink applied on the hosted gateway, when there was one |
-| `_blinkpay_amount_mismatch_flagged` | Set when a completed payment reported an amount that differs from the order total, so the flag is noted once |
+| `_blinkpay_amount_mismatch_flagged` | Set when a completed payment reported an amount that differs from the order total — or reported none — so the flag is noted once |
+| `_blinkpay_settled_after_cancellation` | Set when the payment settled after the order had already been cancelled, so the warning is raised once and the parked order stays parked |
+| `_blinkpay_status_checks` | How many deferred status checks have run; spaces the polling schedule and ends it after 36 hours |
+| `_blinkpay_lock_retries` | Consecutive deferred checks that found the order locked by another operation; cleared by any check that runs |
 | `_blinkpay_idempotency_*` | Idempotency keys, scoped to the current payment attempt and discarded once bound to a payment |
 
 ## Extensibility

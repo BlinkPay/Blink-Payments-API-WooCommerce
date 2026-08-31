@@ -24,3 +24,9 @@ $wpdb->query(
 	    OR option_name LIKE 'wc\_blinkpay\_scopes\_%'
 	    OR option_name LIKE 'wc\_blinkpay\_order\_%.lock'"
 );
+
+// The direct DELETE bypasses the object cache entries update_option() made
+// for the hashed wc_blinkpay_scopes_* options, whose names cannot be derived
+// here; without a flush, a reinstall inside the cache TTL would read the old
+// scope grant.
+wp_cache_flush();
