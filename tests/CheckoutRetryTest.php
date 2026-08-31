@@ -147,6 +147,84 @@ class CheckoutRetryTest extends TestCase {
 		$this->assertSame( 'qp-fresh', $order->get_meta( '_blinkpay_quick_payment_id' ) );
 	}
 
+	public function test_a_retry_after_a_rejected_consent_discards_the_previous_attempts_state() {
+		$order = $this->register_order( 708 );
+		$order->update_meta_data( '_blinkpay_quick_payment_id', 'qp-708' );
+		// Everything the rejected first attempt left behind: its payment ID,
+		// how it settled, an exhausted check counter and a mismatch flag.
+		$order->update_meta_data( '_blinkpay_payment_id', 'pay-old-rejected' );
+		$order->update_meta_data( '_blinkpay_accepted_reason', 'card_network_accepted' );
+		$order->update_meta_data( '_blinkpay_status_checks', 45 );
+		$order->update_meta_data( '_blinkpay_amount_mismatch_flagged', 'yes' );
+
+		$client  = new WC_BlinkPay_Fake_API_Client(
+			array(
+				array(
+					'quick_payment_id' => 'qp-fresh',
+					'redirect_uri'     => 'https://gateway.test/pay/qp-fresh',
+				),
+			),
+			array( $this->consent( 'Rejected' ) )
+		);
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		$result = $gateway->process_payment( 708 );
+
+		$this->assertSame( 'success', $result['result'] );
+		$this->assertSame( '', $order->get_meta( '_blinkpay_payment_id' ), 'The dead payment ID must not survive to misdirect a later refund.' );
+		$this->assertSame( '', $order->get_meta( '_blinkpay_accepted_reason' ) );
+		$this->assertSame( '', $order->get_meta( '_blinkpay_status_checks' ), 'An exhausted counter would deny the new debit its deferred checks.' );
+		$this->assertSame( '', $order->get_meta( '_blinkpay_amount_mismatch_flagged' ) );
+		$this->assertCount( 1, $GLOBALS['wc_blinkpay_scheduled_events'], 'The fresh attempt must get its own deferred checks.' );
+	}
+
+	public function test_a_refund_after_a_retried_checkout_targets_the_new_payment() {
+		$order = $this->register_order( 709 );
+		$order->update_meta_data( '_blinkpay_quick_payment_id', 'qp-709' );
+		$order->update_meta_data( '_blinkpay_payment_id', 'pay-old-rejected' );
+
+		$client  = new WC_BlinkPay_Fake_API_Client(
+			array(
+				array(
+					'quick_payment_id' => 'qp-fresh',
+					'redirect_uri'     => 'https://gateway.test/pay/qp-fresh',
+				),
+			),
+			array(
+				// The retry's confirmation sees the rejected first attempt;
+				// the deferred check then sees the fresh payment settled.
+				$this->consent( 'Rejected' ),
+				$this->consent(
+					'Consumed',
+					array(
+						'payment_id' => 'pay-new-settled',
+						'status'     => 'AcceptedSettlementCompleted',
+					)
+				),
+			),
+			array( array( 'refund_id' => 'rf-709' ) ),
+			array(
+				array(
+					'refund_id'      => 'rf-709',
+					'status'         => 'completed',
+					'account_number' => '12-3456-7890123-00',
+				),
+			)
+		);
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		$gateway->process_payment( 709 );
+		$gateway->check_payment_status( 709 );
+
+		$this->assertTrue( $order->is_paid() );
+		$this->assertSame( 'pay-new-settled', $order->get_meta( '_blinkpay_payment_id' ) );
+
+		$result = $gateway->process_refund( 709, 49.95, '' );
+
+		$this->assertTrue( $result );
+		$this->assertSame( 'pay-new-settled', $client->refund_calls[0]['payment_id'], 'The refund must be sent against the payment that settled, never the rejected first attempt.' );
+	}
+
 	public function test_a_retry_with_an_unconfirmable_previous_attempt_creates_no_second_payment() {
 		$order = $this->register_order( 705 );
 		$order->update_meta_data( '_blinkpay_quick_payment_id', 'qp-705' );

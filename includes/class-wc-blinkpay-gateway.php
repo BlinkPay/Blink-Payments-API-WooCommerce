@@ -335,7 +335,27 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		// The previous attempt is confirmed terminal with no money moved — a
 		// rejected, revoked or timed-out consent, or a bank-rejected payment
 		// — so a fresh quick payment is safe to create over it.
+		$this->reset_payment_attempt_state( $order );
+
 		return null;
+	}
+
+	/**
+	 * Discards the previous attempt's per-attempt state so a fresh quick
+	 * payment starts clean. The payment ID is recorded even for a rejected
+	 * payment, the check counter may already be exhausted and the mismatch
+	 * flag is per payment — left behind, they would misdirect a later refund
+	 * at the dead payment, deny the new debit its deferred checks and
+	 * short-circuit its first poll.
+	 *
+	 * @param WC_Order $order The order.
+	 */
+	private function reset_payment_attempt_state( $order ) {
+		$order->delete_meta_data( '_blinkpay_payment_id' );
+		$order->delete_meta_data( '_blinkpay_accepted_reason' );
+		$order->delete_meta_data( '_blinkpay_status_checks' );
+		$order->delete_meta_data( '_blinkpay_amount_mismatch_flagged' );
+		$order->save();
 	}
 
 	/**
