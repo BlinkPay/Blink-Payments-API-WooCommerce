@@ -126,6 +126,7 @@ class CustomerIdentificationTest extends TestCase {
 		$order = $this->register_order( 506 );
 		$order->update_meta_data( '_blinkpay_payment_id', 'pay-506' );
 		$order->update_meta_data( '_blinkpay_accepted_reason', 'card_network_accepted' );
+		$order->payment_complete( 'pay-506' );
 
 		$client  = new WC_BlinkPay_Fake_API_Client(
 			array(),

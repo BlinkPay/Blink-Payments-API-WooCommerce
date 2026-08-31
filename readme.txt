@@ -36,7 +36,7 @@ WooCommerce's own **Refund manually** button is hidden on BlinkPay orders — it
 
 = Surcharges =
 
-If surcharging is enabled for your BlinkPay merchant account, BlinkPay adds the surcharge on top of the order total once the customer selects a payment method on the hosted gateway, and the customer sees and authorises the combined amount there. WooCommerce still records the order total as paid; the amount actually charged and the surcharge are recorded on the order as a note and as metadata for reconciliation. The plugin also verifies the paid amount against the order total before completing an order — an underpaid order is placed on hold for you to review rather than completed silently.
+If surcharging is enabled for your BlinkPay merchant account, BlinkPay adds the surcharge on top of the order total once the customer selects a payment method on the hosted gateway, and the customer sees and authorises the combined amount there. WooCommerce still records the order total as paid; the amount actually charged and the surcharge are recorded on the order as a note and as metadata for reconciliation. The plugin also verifies the paid amount against the order total before completing an order — an order paid for the wrong amount, in either direction, is placed on hold for you to review rather than completed silently.
 
 = Requirements =
 
@@ -113,6 +113,10 @@ Yes. The `wc_blinkpay_quick_payment_payload` filter modifies the quick payment r
 * Send the order ID as the PCR code for exact reconciliation, and derive the hashed customer identifier from the customer ID — omitted entirely when no per-customer value exists.
 * Distinguish a customer-declined consent from a bank-rejected payment in the order notes.
 * Send the OAuth token request in the documented form encoding, and correct the checkout copy for merchant accounts with card payments enabled.
+* Flag a completed payment whose amount differs from the order total in either direction, not only underpayments.
+* Run refunds under the per-order lock, refusing a second submission while one is in flight, and reject manual money-carrying refunds server-side rather than only hiding the button.
+* Refund a surcharged payment as a partial for the exact amount requested.
+* Keep orders still awaiting a payment outcome out of WooCommerce's unpaid-order cancellation, and surface a payment that settles after its order was cancelled by parking the order on hold with a prominent note instead of discarding the payment silently.
 
 = 1.0.4 =
 * Use SHA-256 instead of MD5 for the access-token cache key.

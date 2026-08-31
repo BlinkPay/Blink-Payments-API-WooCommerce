@@ -21,12 +21,17 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	const INLINE_POLL_ATTEMPTS = 5;
 	const INLINE_POLL_DELAY    = 2;
 
-	// How long the per-order confirmation lock may be held, in seconds. Sized
-	// above the return page's worst case — INLINE_POLL_ATTEMPTS requests at
-	// the API client's 30-second timeout plus the sleeps between them — so a
-	// slow but live confirmation is never barged in on, while a crashed
-	// holder's lock still expires within minutes.
-	const ORDER_LOCK_TIMEOUT = 180;
+	// How long the per-order lock may be held, in seconds. Sized above the
+	// worst-case holder — the account-number refund path's create plus
+	// INLINE_POLL_ATTEMPTS retrievals at the API client's 30-second timeout,
+	// plus the pauses between them — so a slow but live operation is never
+	// barged in on, while a crashed holder's lock still expires within
+	// minutes.
+	const ORDER_LOCK_TIMEOUT = 300;
+
+	// How soon a deferred check that lost the lock retries. No check ran, so
+	// it must not wait out a whole tier delay — 2 hours in the last tier.
+	const ORDER_LOCK_RETRY_DELAY = 60;
 
 	// Deferred WP-Cron checks: tiers of (number of checks, delay in seconds
 	// before each). Bank settlement is asynchronous — a payment initiated in
@@ -374,6 +379,15 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	}
 
 	/**
+	 * Waits between polling attempts. A seam so tests can skip real sleeps.
+	 *
+	 * @param int $seconds How long to pause.
+	 */
+	protected function pause( $seconds ) {
+		sleep( $seconds );
+	}
+
+	/**
 	 * Handles the customer returning from the Blink gateway
 	 * (/wc-api/blinkpay_return/). Blink appends `cid` plus, on non-success,
 	 * a `status` of cancelled/rejected/timeout/error, or `pending` while the
@@ -439,12 +453,10 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		$this->release_order_lock( $order_id );
 
 		if ( 'failed' === $outcome ) {
-			wc_add_notice(
-				$reported_failure
-					? __( 'Your payment was not completed and you have not been charged. Please try again.', 'blinkpay-nz-for-woocommerce' )
-					: __( 'Your payment was not completed. Please try again.', 'blinkpay-nz-for-woocommerce' ),
-				'error'
-			);
+			// Keyed off the API-confirmed outcome, not the replayable URL
+			// parameter: every confirmed failure path means no money moved,
+			// so the message stays accurate by construction.
+			wc_add_notice( __( 'Your payment was not completed and you have not been charged. Please try again.', 'blinkpay-nz-for-woocommerce' ), 'error' );
 			wp_safe_redirect( $order->get_checkout_payment_url() );
 			exit;
 		}
@@ -472,7 +484,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 
 		for ( $attempt = 0; $attempt < self::INLINE_POLL_ATTEMPTS; $attempt++ ) {
 			if ( $attempt > 0 ) {
-				sleep( self::INLINE_POLL_DELAY );
+				$this->pause( self::INLINE_POLL_DELAY );
 			}
 
 			$response = $client->get_quick_payment( $quick_payment_id );
@@ -483,6 +495,14 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			$outcome = $this->evaluate_consent( $order, isset( $response['consent'] ) ? $response['consent'] : array() );
 			if ( 'pending' !== $outcome ) {
 				return $outcome;
+			}
+
+			// A flagged amount mismatch has already parked the order with its
+			// own note; re-polling reads the same payment, and the generic
+			// "not yet confirmed" note below would contradict that flag.
+			if ( $order->get_meta( '_blinkpay_amount_mismatch_flagged' ) ) {
+				$this->schedule_status_check( $order );
+				return 'pending';
 			}
 		}
 
@@ -502,9 +522,17 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		$status = isset( $consent['status'] ) ? $consent['status'] : '';
 
 		if ( ! empty( $consent['payments'][0] ) ) {
-			return $this->apply_payment_result( $order, $consent['payments'][0], $status );
+			$outcome = $this->apply_payment_result( $order, $consent['payments'][0], $status );
+			if ( 'pending' !== $outcome ) {
+				return $outcome;
+			}
 		}
 
+		// Checked even when a payment record exists: a terminal consent with a
+		// non-terminal payment should not poll for the full 36 hours. The spec
+		// promises this combination does not occur, so it only fires on an
+		// anomalous response — and a wrongly failed order self-heals, because
+		// failed orders keep polling and a settled debit recovers them.
 		if ( in_array( $status, array( 'Rejected', 'Revoked', 'GatewayTimeout' ), true ) ) {
 			/* translators: %s: consent status */
 			$this->fail_order( $order, sprintf( __( 'The BlinkPay consent ended with status %s.', 'blinkpay-nz-for-woocommerce' ), $status ) );
@@ -540,9 +568,19 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		if ( 'AcceptedSettlementCompleted' === $status ) {
 			$amount = isset( $payment['detail']['amount'] ) && is_array( $payment['detail']['amount'] ) ? $payment['detail']['amount'] : array();
 
-			if ( $this->is_underpaid( $order, $amount ) ) {
-				$this->flag_underpayment( $order, $payment_id, $amount['total'] );
+			if ( $this->is_amount_mismatched( $order, $amount ) ) {
+				$this->flag_amount_mismatch( $order, $payment_id, $amount['total'] );
 				return 'pending';
+			}
+
+			// A payment settling after its order was cancelled — or an order
+			// already flagged as such — is surfaced for the merchant, never
+			// completed automatically: WooCommerce released any held stock at
+			// cancellation, so completing would claim goods the shop may no
+			// longer have.
+			if ( $order->has_status( 'cancelled' ) || $order->get_meta( '_blinkpay_settled_after_cancellation' ) ) {
+				$this->flag_settled_payment_on_cancelled_order( $order, $payment, $amount );
+				return 'paid';
 			}
 
 			if ( ! empty( $payment['accepted_reason'] ) ) {
@@ -576,9 +614,11 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	}
 
 	/**
-	 * Whether the payment's reported amount is less than the order total. The
-	 * request body is filterable by third-party code, so the gateway verifies
-	 * what it was actually paid rather than trusting the status alone. The
+	 * Whether the payment's reported amount differs from the order total in
+	 * either direction. The request body is filterable by third-party code,
+	 * so the gateway verifies what it was actually paid rather than trusting
+	 * the status alone — and an inflated amount is as wrong as a short one:
+	 * a legitimate surcharge lives in total_charge, never in total. The
 	 * comparison is on the pre-surcharge total — the price of the goods — and
 	 * in whole cents. An amount the API did not report cannot be verified and
 	 * does not block completion.
@@ -587,29 +627,30 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	 * @param array    $amount The payment's amount model.
 	 * @return bool
 	 */
-	private function is_underpaid( $order, array $amount ) {
+	private function is_amount_mismatched( $order, array $amount ) {
 		if ( ! isset( $amount['total'] ) ) {
 			return false;
 		}
 
-		return (int) round( (float) $amount['total'] * 100 ) < (int) round( (float) $order->get_total() * 100 );
+		return (int) round( (float) $amount['total'] * 100 ) !== (int) round( (float) $order->get_total() * 100 );
 	}
 
 	/**
-	 * Parks an underpaid order on hold for the merchant instead of silently
-	 * completing it. Noted once: the deferred status checks keep re-reading
-	 * the same payment, and the merchant needs one flag, not one per poll.
+	 * Parks an order paid for the wrong amount on hold for the merchant
+	 * instead of silently completing it. Noted once: the deferred status
+	 * checks keep re-reading the same payment, and the merchant needs one
+	 * flag, not one per poll.
 	 *
 	 * @param WC_Order $order      The order.
 	 * @param string   $payment_id The payment ID.
 	 * @param string   $paid_total The paid amount reported by the API.
 	 */
-	private function flag_underpayment( $order, $payment_id, $paid_total ) {
-		if ( $order->get_meta( '_blinkpay_underpayment_flagged' ) ) {
+	private function flag_amount_mismatch( $order, $payment_id, $paid_total ) {
+		if ( $order->get_meta( '_blinkpay_amount_mismatch_flagged' ) ) {
 			return;
 		}
 
-		$order->update_meta_data( '_blinkpay_underpayment_flagged', 'yes' );
+		$order->update_meta_data( '_blinkpay_amount_mismatch_flagged', 'yes' );
 		$order->save();
 
 		$note = sprintf(
@@ -625,6 +666,44 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		} else {
 			$order->update_status( 'on-hold', $note );
 		}
+	}
+
+	/**
+	 * Surfaces a payment that settled after its order was cancelled —
+	 * typically by WooCommerce's unpaid-order sweep between two deferred
+	 * checks. The money has moved but the order no longer accounts for it,
+	 * so the order is parked on hold with a prominent note for the merchant
+	 * instead of being completed automatically or discarded silently. Noted
+	 * once: a customer revisiting the return URL re-reads the same payment,
+	 * and the parked order must stay parked until the merchant acts.
+	 *
+	 * @param WC_Order $order   The order.
+	 * @param array    $payment The payment model from the API.
+	 * @param array    $amount  The payment's amount model.
+	 */
+	private function flag_settled_payment_on_cancelled_order( $order, array $payment, array $amount ) {
+		if ( $order->get_meta( '_blinkpay_settled_after_cancellation' ) ) {
+			return;
+		}
+
+		if ( ! empty( $payment['accepted_reason'] ) ) {
+			// Recorded as on the completion path: the merchant's likely next
+			// step is a refund, which needs how the payment settled.
+			$order->update_meta_data( '_blinkpay_accepted_reason', $payment['accepted_reason'] );
+		}
+		$this->record_charged_amount( $order, $amount );
+		$order->update_meta_data( '_blinkpay_settled_after_cancellation', 'yes' );
+		$order->save();
+
+		$order->update_status(
+			'on-hold',
+			sprintf(
+				/* translators: 1: payment ID, 2: paid amount */
+				__( 'BlinkPay payment %1$s settled for NZD %2$s after this order had already been cancelled — most likely by WooCommerce cancelling unpaid orders after the stock hold window — and any held stock was released. The customer has been charged. The order has been placed on hold: check stock and complete the order manually, or set it to processing and refund the payment via BlinkPay.', 'blinkpay-nz-for-woocommerce' ),
+				isset( $payment['payment_id'] ) ? $payment['payment_id'] : '',
+				$this->format_amount( isset( $amount['total'] ) ? $amount['total'] : $order->get_total() )
+			)
+		);
 	}
 
 	/**
@@ -722,19 +801,35 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	}
 
 	/**
+	 * Whether the order carries a quick payment whose outcome is still being
+	 * resolved by the deferred status checks. WooCommerce's stock-hold sweep
+	 * (wc_cancel_unpaid_orders()) uses this to leave such orders alone: the
+	 * sweep's default 60-minute window is narrower than the check schedule,
+	 * and a payment settling after the sweep would land on a cancelled order.
+	 *
+	 * @param WC_Order $order The order.
+	 * @return bool
+	 */
+	public function has_unresolved_quick_payment( $order ) {
+		return $this->id === $order->get_payment_method()
+			&& '' !== (string) $order->get_meta( '_blinkpay_quick_payment_id' )
+			&& false !== $this->get_status_check_delay( (int) $order->get_meta( '_blinkpay_status_checks' ) );
+	}
+
+	/**
 	 * WP-Cron callback: re-checks a not-yet-terminal payment. Runs under the
 	 * per-order lock so it cannot complete or fail an order a return request
 	 * is confirming at the same moment. A contended lock defers to the
-	 * holder: the check is rescheduled without advancing the attempt counter,
-	 * because no check ran.
+	 * holder: the check retries shortly, without advancing the attempt
+	 * counter, because no check ran — waiting out a whole tier delay would
+	 * stall the chain for up to 2 hours in the last tier.
 	 *
 	 * @param int $order_id The order ID.
 	 */
 	public function check_payment_status( $order_id ) {
 		if ( ! $this->acquire_order_lock( $order_id ) ) {
-			$order = wc_get_order( $order_id );
-			if ( $order ) {
-				$this->schedule_status_check( $order );
+			if ( ! wp_next_scheduled( self::STATUS_CHECK_HOOK, array( $order_id ) ) ) {
+				wp_schedule_single_event( time() + self::ORDER_LOCK_RETRY_DELAY, self::STATUS_CHECK_HOOK, array( $order_id ) );
 			}
 			return;
 		}
@@ -757,14 +852,16 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		if ( ! $order
 			|| $this->id !== $order->get_payment_method()
 			|| $order->is_paid()
-			|| $order->has_status( array( 'cancelled', 'refunded' ) ) ) {
+			|| $order->has_status( 'refunded' ) ) {
 			return;
 		}
 
-		// A failed order whose quick payment may still be in flight is not
-		// abandoned: a debit initiated before the failure can still settle,
-		// and payment_complete() recovers the order to paid if it does.
-		if ( $order->has_status( 'failed' ) && ! $order->get_meta( '_blinkpay_quick_payment_id' ) ) {
+		// A failed or cancelled order whose quick payment may still be in
+		// flight is not abandoned: a debit initiated before the failure — or
+		// before WooCommerce's unpaid-order sweep cancelled the order — can
+		// still settle. A settlement recovers a failed order to paid, and is
+		// surfaced loudly on a cancelled one.
+		if ( $order->has_status( array( 'failed', 'cancelled' ) ) && ! $order->get_meta( '_blinkpay_quick_payment_id' ) ) {
 			return;
 		}
 
@@ -784,6 +881,15 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 
 		if ( 'pending' !== $outcome ) {
 			return;
+		}
+
+		// Only pending orders are eligible for WooCommerce's stock-hold sweep
+		// (wc_cancel_unpaid_orders()), whose default 60-minute window is
+		// narrower than the check schedule — the last tier spaces checks
+		// 2 hours apart — so an order the check leaves unresolved is parked
+		// on hold, out of the sweep's reach.
+		if ( $order->has_status( 'pending' ) ) {
+			$order->update_status( 'on-hold', __( 'BlinkPay has not yet confirmed the payment. The order is held while the deferred checks continue and will update automatically once the outcome is known.', 'blinkpay-nz-for-woocommerce' ) );
 		}
 
 		if ( ! $this->schedule_status_check( $order ) ) {
@@ -811,6 +917,13 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			return new WP_Error( 'blinkpay_refund_failed', __( 'Order not found.', 'blinkpay-nz-for-woocommerce' ) );
 		}
 
+		// A payment ID alone is not proof of a settled payment: it is also
+		// recorded for rejected payments, and a refund fired at one of those
+		// deserves a local explanation, not a raw API rejection.
+		if ( ! $order->is_paid() && ! $order->has_status( 'refunded' ) ) {
+			return new WP_Error( 'blinkpay_refund_failed', __( 'This order has no settled BlinkPay payment to refund.', 'blinkpay-nz-for-woocommerce' ) );
+		}
+
 		$payment_id = $order->get_meta( '_blinkpay_payment_id' );
 		if ( ! $payment_id ) {
 			$payment_id = $order->get_transaction_id();
@@ -824,15 +937,47 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			return new WP_Error( 'blinkpay_refund_failed', __( 'The refund amount must be greater than zero.', 'blinkpay-nz-for-woocommerce' ) );
 		}
 
+		// The refunds API accepts no idempotency key and allows multiple
+		// money-transfer refunds against one payment, so a double submission
+		// — an admin retrying after a proxy timeout, or two admins acting at
+		// once — must be blocked here, by the same per-order lock that
+		// serialises order completion.
+		if ( ! $this->acquire_order_lock( $order->get_id() ) ) {
+			return new WP_Error( 'blinkpay_refund_failed', __( 'Another BlinkPay operation on this order is still in progress. Check the order notes and the BlinkPay merchant portal for the outcome of the previous request before retrying the refund.', 'blinkpay-nz-for-woocommerce' ) );
+		}
+
+		$result = $this->execute_refund( $order, $payment_id, $amount, $reason );
+
+		$this->release_order_lock( $order->get_id() );
+
+		return $result;
+	}
+
+	/**
+	 * The body of a refund. The caller holds the per-order lock, so no second
+	 * submission can create another refund for this order concurrently.
+	 *
+	 * @param WC_Order $order      The order.
+	 * @param string   $payment_id The BlinkPay payment ID.
+	 * @param float    $amount     The refund amount.
+	 * @param string   $reason     The refund reason.
+	 * @return bool|WP_Error
+	 */
+	private function execute_refund( $order, $payment_id, $amount, $reason ) {
 		$client = $this->get_api_client();
 
 		if ( 'card_network_accepted' !== $order->get_meta( '_blinkpay_accepted_reason' ) ) {
 			return $this->process_account_number_refund( $order, $client, $payment_id, $amount, $reason );
 		}
 
-		// Refunding the whole order total refunds the whole payment; anything
-		// less is a partial refund and must carry the amount to the API.
-		$is_full = $this->format_amount( $amount ) === $this->format_amount( $order->get_total() );
+		// Refunding the whole order total refunds the whole payment — but only
+		// when no surcharge was recorded: what full_refund returns for a
+		// surcharged payment (the order total, or the higher instructed
+		// total_charge) is not pinned down by the API contract, so a
+		// surcharged payment is always refunded as a partial carrying the
+		// exact amount requested.
+		$is_full = '' === (string) $order->get_meta( '_blinkpay_surcharge' )
+			&& $this->format_amount( $amount ) === $this->format_amount( $order->get_total() );
 
 		$payload = array(
 			'type'       => $is_full ? 'full_refund' : 'partial_refund',
@@ -956,7 +1101,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		$refund = array();
 		for ( $attempt = 0; $attempt < self::INLINE_POLL_ATTEMPTS; $attempt++ ) {
 			if ( $attempt > 0 ) {
-				sleep( self::INLINE_POLL_DELAY );
+				$this->pause( self::INLINE_POLL_DELAY );
 			}
 
 			$result = $client->get_refund( $refund_id );
@@ -1086,7 +1231,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	private function is_idempotency_conflict( $error ) {
 		$data = $error->get_error_data();
 
-		return is_array( $data ) && isset( $data['status'] ) && 409 === $data['status'];
+		return is_array( $data ) && isset( $data['status'] ) && 409 === (int) $data['status'];
 	}
 
 	/**
@@ -1190,7 +1335,9 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	 * @param string   $note  The failure note.
 	 */
 	public function fail_order( $order, $note ) {
-		if ( $order->has_status( 'failed' ) ) {
+		// A cancelled order stays cancelled: no money moved either way, and
+		// failing it would overwrite what may be a deliberate cancellation.
+		if ( $order->has_status( array( 'failed', 'cancelled' ) ) ) {
 			$order->add_order_note( $note );
 		} else {
 			$order->update_status( 'failed', $note );

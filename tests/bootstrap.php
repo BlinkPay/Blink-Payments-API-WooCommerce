@@ -139,6 +139,15 @@ function wp_rand( $min, $max ) {
 }
 
 function wp_schedule_single_event( $timestamp, $hook, $args = array() ) {
+	// Mirrors WP core: an identical event within ten minutes of the requested
+	// time is refused, so tests exercise the duplicate protection the gateway
+	// relies on rather than a stub that always accepts.
+	foreach ( $GLOBALS['wc_blinkpay_scheduled_events'] as $event ) {
+		if ( $event['hook'] === $hook && $event['args'] === $args && abs( $event['timestamp'] - $timestamp ) < 600 ) {
+			return false;
+		}
+	}
+
 	$GLOBALS['wc_blinkpay_scheduled_events'][] = array(
 		'timestamp' => $timestamp,
 		'hook'      => $hook,
@@ -311,6 +320,9 @@ class WC_BlinkPay_Test_Order {
 	/** @var string */
 	private $billing_email = 'customer@example.test';
 
+	/** @var float */
+	private $total = 49.95;
+
 	public function __construct( $id ) {
 		$this->id = $id;
 	}
@@ -360,7 +372,11 @@ class WC_BlinkPay_Test_Order {
 	}
 
 	public function get_total() {
-		return 49.95;
+		return $this->total;
+	}
+
+	public function set_total( $total ) {
+		$this->total = $total;
 	}
 
 	public function get_billing_email() {
@@ -446,6 +462,10 @@ class WC_BlinkPay_Test_Gateway extends WC_BlinkPay_Gateway {
 
 	public function get_api_client() {
 		return $this->test_api_client;
+	}
+
+	protected function pause( $seconds ) {
+		// Real sleeps would slow the suite without changing behaviour.
 	}
 }
 

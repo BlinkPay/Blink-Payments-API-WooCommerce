@@ -126,6 +126,69 @@ class AmountVerificationTest extends TestCase {
 		$this->assertCount( 1, $order->notes );
 	}
 
+	public function test_an_overpaid_order_is_flagged_for_the_merchant_instead_of_completing() {
+		$order   = new WC_BlinkPay_Test_Order( 606 );
+		$gateway = new WC_BlinkPay_Test_Gateway( new WC_BlinkPay_Fake_API_Client() );
+
+		// The payload is filterable, so an inflated amount is as wrong as a
+		// short one — a legitimate surcharge lives in total_charge, not total.
+		$outcome = $gateway->apply_payment_result(
+			$order,
+			$this->completed_payment(
+				array(
+					'currency' => 'NZD',
+					'total'    => '100.00',
+				)
+			)
+		);
+
+		$this->assertSame( 'pending', $outcome );
+		$this->assertFalse( $order->is_paid() );
+		$this->assertTrue( $order->has_status( 'on-hold' ) );
+		$this->assertCount( 1, $order->notes );
+		$this->assertStringContainsString( '100.00', $order->notes[0] );
+		$this->assertStringContainsString( '49.95', $order->notes[0] );
+	}
+
+	public function test_the_inline_poll_does_not_contradict_a_flagged_mismatch() {
+		$order = new WC_BlinkPay_Test_Order( 607 );
+		$order->update_meta_data( '_blinkpay_quick_payment_id', 'qp-607' );
+
+		$client  = new WC_BlinkPay_Fake_API_Client(
+			array(),
+			array(
+				array(
+					'consent' => array(
+						'status'   => 'Consumed',
+						'payments' => array(
+							$this->completed_payment(
+								array(
+									'currency' => 'NZD',
+									'total'    => '10.00',
+								)
+							),
+						),
+					),
+				),
+			)
+		);
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		$outcome = $gateway->confirm_quick_payment( $order );
+
+		$this->assertSame( 'pending', $outcome );
+		$this->assertTrue( $order->has_status( 'on-hold' ) );
+
+		// The mismatch note stands alone: re-polling reads the same payment,
+		// and the generic "not yet confirmed" note would contradict it.
+		$this->assertCount( 1, $client->get_calls );
+		$this->assertCount( 1, $order->notes );
+		$this->assertStringNotContainsString( 'not yet confirmed', $order->notes[0] );
+
+		// The order stays in the polling pool for the deferred checks.
+		$this->assertNotFalse( wp_next_scheduled( WC_BlinkPay_Gateway::STATUS_CHECK_HOOK, array( 607 ) ) );
+	}
+
 	public function test_a_payment_without_a_reported_amount_still_completes() {
 		$order   = new WC_BlinkPay_Test_Order( 605 );
 		$gateway = new WC_BlinkPay_Test_Gateway( new WC_BlinkPay_Fake_API_Client() );

@@ -129,10 +129,11 @@ class ConcurrencyGuardTest extends TestCase {
 		$this->assertNotFalse( get_transient( 'wc_blinkpay_order_lock_401' ) );
 	}
 
-	public function test_the_cron_check_defers_and_reschedules_while_another_process_holds_the_lock() {
+	public function test_the_cron_check_defers_and_retries_shortly_while_another_process_holds_the_lock() {
 		$order = $this->register_order( 402 );
 		$order->update_meta_data( '_blinkpay_quick_payment_id', 'qp-402' );
-		$order->update_meta_data( '_blinkpay_status_checks', 3 );
+		// Deep in the last tier, where the tier delay is 2 hours.
+		$order->update_meta_data( '_blinkpay_status_checks', 35 );
 		$order->update_status( 'on-hold' );
 
 		$this->hold_order_lock( 402 );
@@ -140,16 +141,69 @@ class ConcurrencyGuardTest extends TestCase {
 		$client  = new WC_BlinkPay_Fake_API_Client( array(), array( $this->consent_with_payment( 'pay-402', 'AcceptedSettlementCompleted' ) ) );
 		$gateway = new WC_BlinkPay_Test_Gateway( $client );
 
+		$before = time();
 		$gateway->check_payment_status( 402 );
 
 		$this->assertSame( array(), $client->get_calls, 'A deferred check must not poll the API while another process is confirming the order.' );
 		$this->assertSame( 'on-hold', $order->get_status() );
-		$this->assertSame( 3, $order->get_meta( '_blinkpay_status_checks' ), 'A deferred check ran no check, so the attempt counter must not advance.' );
+		$this->assertSame( 35, $order->get_meta( '_blinkpay_status_checks' ), 'A deferred check ran no check, so the attempt counter must not advance.' );
 
-		// The polling chain survives: exactly one check is rescheduled.
+		// The polling chain survives with exactly one retry — and shortly, not
+		// a whole tier delay later, because no check actually ran.
 		$events = $GLOBALS['wc_blinkpay_scheduled_events'];
 		$this->assertCount( 1, $events );
 		$this->assertSame( array( 402 ), $events[0]['args'] );
+		$this->assertLessThanOrEqual( time() + WC_BlinkPay_Gateway::ORDER_LOCK_RETRY_DELAY, $events[0]['timestamp'] );
+		$this->assertGreaterThanOrEqual( $before + WC_BlinkPay_Gateway::ORDER_LOCK_RETRY_DELAY, $events[0]['timestamp'] );
+	}
+
+	public function test_a_refund_is_refused_while_another_process_holds_the_lock() {
+		$order = $this->register_order( 406 );
+		$order->update_meta_data( '_blinkpay_payment_id', 'pay-406' );
+		$order->update_meta_data( '_blinkpay_accepted_reason', 'card_network_accepted' );
+		$order->payment_complete( 'pay-406' );
+
+		$this->hold_order_lock( 406 );
+
+		$client  = new WC_BlinkPay_Fake_API_Client( array(), array(), array( array( 'refund_id' => 'rf-406' ) ) );
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		// The refunds API accepts no idempotency key, so a second submission
+		// while one is in flight must be refused before any money can move.
+		$result = $gateway->process_refund( 406, 49.95, '' );
+
+		$this->assertInstanceOf( WP_Error::class, $result );
+		$this->assertStringContainsString( 'still in progress', $result->get_error_message() );
+		$this->assertSame( array(), $client->refund_calls, 'No refund may be created while another operation holds the order.' );
+
+		// The lock belongs to the other process and must survive this request.
+		$this->assertNotFalse( get_transient( 'wc_blinkpay_order_lock_406' ) );
+	}
+
+	public function test_a_refund_releases_the_lock_when_finished() {
+		$order = $this->register_order( 407 );
+		$order->update_meta_data( '_blinkpay_payment_id', 'pay-407' );
+		$order->update_meta_data( '_blinkpay_accepted_reason', 'card_network_accepted' );
+		$order->payment_complete( 'pay-407' );
+
+		$client  = new WC_BlinkPay_Fake_API_Client(
+			array(),
+			array(),
+			array( array( 'refund_id' => 'rf-407' ) ),
+			array(
+				array(
+					'refund_id' => 'rf-407',
+					'status'    => 'completed',
+				),
+			)
+		);
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		$result = $gateway->process_refund( 407, 49.95, '' );
+
+		$this->assertTrue( $result );
+		$this->assertCount( 1, $client->refund_calls );
+		$this->assertFalse( get_transient( 'wc_blinkpay_order_lock_407' ), 'The lock must be released once the refund finishes.' );
 	}
 
 	public function test_the_return_page_abandons_a_stale_failure_when_the_order_was_completed_concurrently() {

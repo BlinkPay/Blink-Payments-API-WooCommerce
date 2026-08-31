@@ -97,6 +97,30 @@ class IdempotencyKeyTest extends TestCase {
 		);
 	}
 
+	public function test_an_idempotency_conflict_with_a_string_status_is_still_recognised() {
+		$order = $this->register_order( 204 );
+
+		$client  = new WC_BlinkPay_Fake_API_Client(
+			array(
+				new WP_Error(
+					'blinkpay_api_error',
+					'Idempotency key has already been used. (BP710)',
+					array(
+						'status' => '409',
+						'body'   => array( 'code' => 'BP710' ),
+					)
+				),
+			)
+		);
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		$gateway->process_payment( 204 );
+
+		// An HTTP layer reporting the status as a string must not defeat the
+		// conflict detection — an undiscarded spent key dead-ends the order.
+		$this->assertSame( '', $order->get_meta( '_blinkpay_idempotency_quick_payment' ), 'A 409 arriving as a string is still a spent key and must be discarded.' );
+	}
+
 	public function test_an_idempotency_conflict_discards_the_key_and_leaves_an_actionable_note() {
 		$order = $this->register_order( 203 );
 

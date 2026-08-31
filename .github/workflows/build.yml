@@ -92,7 +92,7 @@ jobs:
       - name: Build plugin zip
         run: |
           mkdir -p build/blinkpay-nz-for-woocommerce
-          rsync -a --exclude='.git' --exclude='.claude' --exclude='.github' --exclude='.gitignore' --exclude='.wp-env.json' --exclude='build' --exclude='composer.json' --exclude='composer.lock' --exclude='phpunit.xml.dist' --exclude='tests' --exclude='vendor' ./ build/blinkpay-nz-for-woocommerce/
+          rsync -a --exclude='.git' --exclude='.claude' --exclude='.github' --exclude='.gitignore' --exclude='.phpunit.result.cache' --exclude='.wp-env.json' --exclude='build' --exclude='composer.json' --exclude='composer.lock' --exclude='phpunit.xml.dist' --exclude='tests' --exclude='vendor' ./ build/blinkpay-nz-for-woocommerce/
           cd build && zip -r blinkpay-nz-for-woocommerce.zip blinkpay-nz-for-woocommerce
       - name: Upload artifact
         uses: actions/upload-artifact@v5

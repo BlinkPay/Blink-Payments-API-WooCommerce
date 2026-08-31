@@ -123,6 +123,61 @@ class RefundTypeTest extends TestCase {
 		$this->assertStringContainsString( 'merchant portal', $order->notes[0] );
 	}
 
+	public function test_a_surcharged_payment_is_refunded_as_a_partial_for_the_exact_amount() {
+		$order = $this->register_paid_order( 410 );
+		$order->update_meta_data( '_blinkpay_surcharge', '0.59' );
+
+		$client = new WC_BlinkPay_Fake_API_Client(
+			array(),
+			array(),
+			array( array( 'refund_id' => 'rf-410' ) ),
+			array(
+				array(
+					'refund_id' => 'rf-410',
+					'status'    => 'completed',
+				),
+			)
+		);
+
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		// The whole order total is refunded, but the payment carried a
+		// surcharge: what full_refund would return is not pinned down by the
+		// API contract, so the refund must carry the exact amount instead.
+		$result = $gateway->process_refund( 410, 49.95, '' );
+
+		$this->assertTrue( $result );
+
+		$payload = $client->refund_calls[0];
+		$this->assertSame( 'partial_refund', $payload['type'] );
+		$this->assertSame(
+			array(
+				'currency' => 'NZD',
+				'total'    => '49.95',
+			),
+			$payload['amount']
+		);
+	}
+
+	public function test_a_refund_on_an_unpaid_order_is_refused_locally() {
+		$order = new WC_BlinkPay_Test_Order( 411 );
+		$order->update_meta_data( '_blinkpay_payment_id', 'pay-411' );
+		$order->update_status( 'failed', 'The bank rejected the payment.' );
+
+		$GLOBALS['wc_blinkpay_test_orders'][411] = $order;
+
+		$client  = new WC_BlinkPay_Fake_API_Client();
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		// A payment ID is recorded for rejected payments too; refunding one
+		// must be refused locally, not fired at the API.
+		$result = $gateway->process_refund( 411, 49.95, '' );
+
+		$this->assertInstanceOf( WP_Error::class, $result );
+		$this->assertStringContainsString( 'no settled BlinkPay payment', $result->get_error_message() );
+		$this->assertSame( array(), $client->refund_calls );
+	}
+
 	public function test_a_bank_settled_payment_uses_an_account_number_refund() {
 		$order  = $this->register_paid_order( 403, 'source_bank_payment_sent' );
 		$client = new WC_BlinkPay_Fake_API_Client(

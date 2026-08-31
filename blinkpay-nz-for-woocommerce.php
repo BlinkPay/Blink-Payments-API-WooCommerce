@@ -78,16 +78,66 @@ function wc_blinkpay_init() {
 		}
 	);
 
+	// WooCommerce's stock-hold sweep (wc_cancel_unpaid_orders()) cancels stale
+	// pending orders after the hold window — 60 minutes by default, narrower
+	// than the deferred check schedule, whose last tier spaces checks 2 hours
+	// apart — so a payment could settle onto a cancelled order. Orders still
+	// awaiting a payment outcome are kept.
+	add_filter(
+		'woocommerce_cancel_unpaid_order',
+		function ( $should_cancel, $order ) {
+			if ( $should_cancel ) {
+				$gateway = wc_blinkpay_gateway();
+				if ( $gateway && $gateway->has_unresolved_quick_payment( $order ) ) {
+					return false;
+				}
+			}
+			return $should_cancel;
+		},
+		10,
+		2
+	);
+
 	// WooCommerce renders its "Refund manually" button unconditionally, and a
 	// manual refund records money as returned without BlinkPay involvement.
+	// Hiding the button is presentation; the record-integrity control is the
+	// server-side rejection below, which devtools, the REST API and markup
+	// changes cannot bypass.
 	add_action( 'admin_head', 'wc_blinkpay_hide_manual_refund_button' );
+	add_action( 'woocommerce_create_refund', 'wc_blinkpay_block_manual_refund', 10, 2 );
 }
 
 /**
- * Hides WooCommerce's "Refund manually" button on orders paid with BlinkPay.
- * A manual refund marks the order as refunded while no money has moved and
- * no account number has been retrieved, so every BlinkPay refund must go
- * through the "Refund via BlinkPay" button instead.
+ * Rejects a manual (non-gateway) refund on an order paid with BlinkPay. A
+ * manual refund records money as returned while no money has moved and no
+ * account number has been retrieved, so every money-carrying BlinkPay refund
+ * must go through the gateway. Throwing makes wc_create_refund() delete the
+ * refund it just created and hand the message back as a WP_Error, so this
+ * covers the REST API and any path that bypasses the hidden button. A
+ * zero-amount refund (a restock-only correction) claims no money moved and
+ * is allowed through.
+ *
+ * @param WC_Order_Refund $refund The refund being created.
+ * @param array           $args   The wc_create_refund() arguments.
+ * @throws Exception When the refund would record a return BlinkPay was not involved in.
+ */
+function wc_blinkpay_block_manual_refund( $refund, $args ) {
+	if ( ! empty( $args['refund_payment'] ) || ( isset( $args['amount'] ) && (float) $args['amount'] <= 0 ) ) {
+		return;
+	}
+
+	$order = isset( $args['order_id'] ) ? wc_get_order( $args['order_id'] ) : false;
+	if ( $order && 'blinkpay' === $order->get_payment_method() ) {
+		throw new Exception(
+			esc_html__( 'BlinkPay orders cannot be refunded manually: a manual refund records money as returned while none has moved. Use "Refund via BlinkPay" instead.', 'blinkpay-nz-for-woocommerce' )
+		);
+	}
+}
+
+/**
+ * Hides WooCommerce's "Refund manually" button on orders paid with BlinkPay,
+ * steering merchants to "Refund via BlinkPay" before they submit anything.
+ * Cosmetic only — wc_blinkpay_block_manual_refund() is the actual control.
  */
 function wc_blinkpay_hide_manual_refund_button() {
 	if ( ! function_exists( 'get_current_screen' ) ) {
