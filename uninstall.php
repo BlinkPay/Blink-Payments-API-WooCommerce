@@ -10,6 +10,11 @@ defined( 'WP_UNINSTALL_PLUGIN' ) || exit;
 
 delete_option( 'woocommerce_blinkpay_settings' );
 
+// Pending deferred status checks would otherwise fire against a hook with no
+// handler forever. The hook name is a literal: the gateway class that defines
+// the constant is not loaded during uninstall.
+wp_unschedule_hook( 'wc_blinkpay_check_payment_status' );
+
 global $wpdb;
 // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- transient and option names are hashed or per-order, so they cannot be deleted by key.
 $wpdb->query(

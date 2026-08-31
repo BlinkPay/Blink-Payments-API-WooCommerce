@@ -74,4 +74,38 @@ class ConsentDeclineTest extends TestCase {
 		$this->assertSame( 'failed', $outcome );
 		$this->assertStringContainsString( 'rejected by the bank', end( $order->notes ) );
 	}
+
+	public function test_a_settled_payment_is_applied_even_when_it_is_not_the_first_in_the_list() {
+		$order   = $this->register_order( 603 );
+		$gateway = new WC_BlinkPay_Test_Gateway( new WC_BlinkPay_Fake_API_Client() );
+
+		// A one-off quick payment carries at most one payment, but the array
+		// shape allows more: money moved must outrank whatever sits first.
+		$outcome = $gateway->evaluate_consent(
+			$order,
+			array(
+				'status'   => 'Consumed',
+				'payments' => array(
+					array(
+						'payment_id' => 'pay-603-pending',
+						'status'     => 'Pending',
+					),
+					array(
+						'payment_id' => 'pay-603-settled',
+						'status'     => 'AcceptedSettlementCompleted',
+						'detail'     => array(
+							'amount' => array(
+								'currency' => 'NZD',
+								'total'    => '49.95',
+							),
+						),
+					),
+				),
+			)
+		);
+
+		$this->assertSame( 'paid', $outcome );
+		$this->assertTrue( $order->is_paid() );
+		$this->assertSame( 'pay-603-settled', $order->get_meta( '_blinkpay_payment_id' ), 'The settled payment, not the first listed, must be the one recorded.' );
+	}
 }

@@ -457,6 +457,8 @@ class ConcurrencyGuardTest extends TestCase {
 	public function test_the_cron_check_confirms_normally_and_releases_the_lock_when_uncontended() {
 		$order = $this->register_order( 405 );
 		$order->update_meta_data( '_blinkpay_quick_payment_id', 'qp-405' );
+		// Contended retries from an earlier run: a check that runs ends them.
+		$order->update_meta_data( '_blinkpay_lock_retries', 3 );
 		$order->update_status( 'on-hold' );
 
 		$client  = new WC_BlinkPay_Fake_API_Client( array(), array( $this->consent_with_payment( 'pay-405', 'AcceptedSettlementCompleted' ) ) );
@@ -466,6 +468,23 @@ class ConcurrencyGuardTest extends TestCase {
 
 		$this->assertTrue( $order->is_paid() );
 		$this->assertSame( 1, $order->get_meta( '_blinkpay_status_checks' ) );
+		$this->assertSame( '', $order->get_meta( '_blinkpay_lock_retries' ), 'A check that runs must clear the contended-retry counter.' );
 		$this->assertFalse( $this->order_lock_held( 405 ), 'The lock must be released once the check finishes.' );
+	}
+
+	public function test_contended_cron_retries_are_bounded() {
+		$order = $this->register_order( 413 );
+		$order->update_meta_data( '_blinkpay_quick_payment_id', 'qp-413' );
+		$order->update_meta_data( '_blinkpay_lock_retries', WC_BlinkPay_Gateway::ORDER_LOCK_MAX_RETRIES );
+		$order->update_status( 'on-hold' );
+
+		$this->hold_order_lock( 413 );
+
+		$gateway = new WC_BlinkPay_Test_Gateway( new WC_BlinkPay_Fake_API_Client() );
+
+		$gateway->check_payment_status( 413 );
+
+		$this->assertSame( array(), $GLOBALS['wc_blinkpay_scheduled_events'], 'The bounded retries are exhausted: no further retry may be scheduled.' );
+		$this->assertStringContainsString( 'merchant portal', end( $order->notes ), 'The merchant must be pointed at manual verification when the checks stop.' );
 	}
 }

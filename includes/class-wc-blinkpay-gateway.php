@@ -37,6 +37,13 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	// it must not wait out a whole tier delay — 2 hours in the last tier.
 	const ORDER_LOCK_RETRY_DELAY = 60;
 
+	// How many consecutive lock-contended retries a deferred check may make
+	// before giving up — about half an hour at ORDER_LOCK_RETRY_DELAY. The
+	// lock breaks after ORDER_LOCK_TIMEOUT, so exhausting this bound means
+	// something is systematically wrong, and the merchant is pointed at
+	// manual verification rather than rescheduling forever.
+	const ORDER_LOCK_MAX_RETRIES = 30;
+
 	// Deferred WP-Cron checks: tiers of (number of checks, delay in seconds
 	// before each). Bank settlement is asynchronous — a payment initiated in
 	// the evening may not settle until the SBI operating window reopens the
@@ -717,8 +724,9 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	public function evaluate_consent( $order, array $consent ) {
 		$status = isset( $consent['status'] ) ? $consent['status'] : '';
 
-		if ( ! empty( $consent['payments'][0] ) ) {
-			$outcome = $this->apply_payment_result( $order, $consent['payments'][0], $status );
+		$payment = $this->select_reportable_payment( isset( $consent['payments'] ) && is_array( $consent['payments'] ) ? $consent['payments'] : array() );
+		if ( null !== $payment ) {
+			$outcome = $this->apply_payment_result( $order, $payment, $status );
 			if ( 'pending' !== $outcome ) {
 				return $outcome;
 			}
@@ -736,6 +744,32 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		}
 
 		return 'pending';
+	}
+
+	/**
+	 * Picks which of a consent's payments to apply to the order. A one-off
+	 * quick payment carries at most one, but the array shape allows more, so
+	 * defensively prefer the first settled payment — money moved outranks
+	 * everything — then the first rejected one, then the first of any.
+	 *
+	 * @param array $payments The consent's payment models.
+	 * @return array|null The payment to apply, or null when there are none.
+	 */
+	private function select_reportable_payment( array $payments ) {
+		$payments = array_values( array_filter( $payments, 'is_array' ) );
+		if ( ! $payments ) {
+			return null;
+		}
+
+		foreach ( array( 'AcceptedSettlementCompleted', 'Rejected' ) as $preferred ) {
+			foreach ( $payments as $payment ) {
+				if ( isset( $payment['status'] ) && $preferred === $payment['status'] ) {
+					return $payment;
+				}
+			}
+		}
+
+		return $payments[0];
 	}
 
 	/**
@@ -1061,15 +1095,42 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	public function check_payment_status( $order_id ) {
 		$lock = $this->acquire_order_lock( $order_id );
 		if ( ! $lock ) {
-			if ( ! wp_next_scheduled( self::STATUS_CHECK_HOOK, array( $order_id ) ) ) {
-				wp_schedule_single_event( time() + self::ORDER_LOCK_RETRY_DELAY, self::STATUS_CHECK_HOOK, array( $order_id ) );
-			}
+			$this->defer_contended_status_check( $order_id );
 			return;
 		}
 
 		$this->run_status_check( $order_id );
 
 		$this->release_order_lock( $order_id, $lock );
+	}
+
+	/**
+	 * Reschedules a deferred check that lost the per-order lock. No check
+	 * ran, so the retry comes shortly rather than a whole tier delay later —
+	 * but boundedly: an unbounded chain would reschedule forever on an order
+	 * something else touches constantly. Any check that does run clears the
+	 * counter, so the bound only trips on consecutive contention.
+	 *
+	 * @param int $order_id The order ID.
+	 */
+	private function defer_contended_status_check( $order_id ) {
+		$order = wc_get_order( $order_id );
+		if ( ! $order ) {
+			return;
+		}
+
+		$retries = (int) $order->get_meta( '_blinkpay_lock_retries' ) + 1;
+		$order->update_meta_data( '_blinkpay_lock_retries', $retries );
+		$order->save();
+
+		if ( $retries > self::ORDER_LOCK_MAX_RETRIES ) {
+			$order->add_order_note( __( 'BlinkPay deferred status checks stopped: another operation held this order through every retry. Check the payment in the BlinkPay merchant portal and update the order manually.', 'blinkpay-nz-for-woocommerce' ) );
+			return;
+		}
+
+		if ( ! wp_next_scheduled( self::STATUS_CHECK_HOOK, array( $order_id ) ) ) {
+			wp_schedule_single_event( time() + self::ORDER_LOCK_RETRY_DELAY, self::STATUS_CHECK_HOOK, array( $order_id ) );
+		}
 	}
 
 	/**
@@ -1100,6 +1161,8 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 
 		$attempts = (int) $order->get_meta( '_blinkpay_status_checks' ) + 1;
 		$order->update_meta_data( '_blinkpay_status_checks', $attempts );
+		// A check is running, so any run of lock-contended retries has ended.
+		$order->delete_meta_data( '_blinkpay_lock_retries' );
 		$order->save();
 
 		$outcome = 'pending';
