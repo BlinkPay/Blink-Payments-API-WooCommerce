@@ -21,9 +21,17 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	const INLINE_POLL_ATTEMPTS = 5;
 	const INLINE_POLL_DELAY    = 2;
 
-	// Deferred WP-Cron checks: once a minute, giving up after roughly half an hour.
-	const MAX_STATUS_CHECKS      = 30;
-	const STATUS_CHECK_DELAY     = 60;
+	// Deferred WP-Cron checks: tiers of (number of checks, delay in seconds
+	// before each). Bank settlement is asynchronous — a payment initiated in
+	// the evening may not settle until the SBI operating window reopens the
+	// following morning — so polling backs off progressively and the schedule
+	// spans 36 hours rather than giving up after half an hour.
+	const STATUS_CHECK_SCHEDULE = array(
+		array( 10, 60 ),   // Every minute for the first 10 minutes.
+		array( 10, 300 ),  // Every 5 minutes until roughly 1 hour.
+		array( 10, 1800 ), // Every 30 minutes until roughly 6 hours.
+		array( 15, 7200 ), // Every 2 hours until 36 hours.
+	);
 
 	/** @var bool */
 	public $sandbox;
@@ -409,12 +417,41 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	}
 
 	/**
+	 * Schedules the order's next deferred status check, spaced according to
+	 * how many checks have already run.
+	 *
 	 * @param WC_Order $order The order.
+	 * @return bool Whether a check is scheduled; false once the schedule is exhausted.
 	 */
 	public function schedule_status_check( $order ) {
-		if ( ! wp_next_scheduled( self::STATUS_CHECK_HOOK, array( $order->get_id() ) ) ) {
-			wp_schedule_single_event( time() + self::STATUS_CHECK_DELAY, self::STATUS_CHECK_HOOK, array( $order->get_id() ) );
+		$delay = $this->get_status_check_delay( (int) $order->get_meta( '_blinkpay_status_checks' ) );
+		if ( false === $delay ) {
+			return false;
 		}
+
+		if ( ! wp_next_scheduled( self::STATUS_CHECK_HOOK, array( $order->get_id() ) ) ) {
+			wp_schedule_single_event( time() + $delay, self::STATUS_CHECK_HOOK, array( $order->get_id() ) );
+		}
+
+		return true;
+	}
+
+	/**
+	 * The delay before an order's next status check.
+	 *
+	 * @param int $completed_checks How many checks have already run.
+	 * @return int|false Seconds until the next check, or false when the schedule is exhausted.
+	 */
+	public function get_status_check_delay( $completed_checks ) {
+		foreach ( self::STATUS_CHECK_SCHEDULE as $tier ) {
+			list( $checks, $delay ) = $tier;
+			if ( $completed_checks < $checks ) {
+				return $delay;
+			}
+			$completed_checks -= $checks;
+		}
+
+		return false;
 	}
 
 	/**
@@ -457,10 +494,8 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			return;
 		}
 
-		if ( $attempts < self::MAX_STATUS_CHECKS ) {
-			$this->schedule_status_check( $order );
-		} else {
-			$order->add_order_note( __( 'BlinkPay automatic status checks are exhausted. Check the payment in the BlinkPay merchant portal and update the order manually.', 'blinkpay-nz-for-woocommerce' ) );
+		if ( ! $this->schedule_status_check( $order ) ) {
+			$order->add_order_note( __( 'BlinkPay automatic status checks are exhausted: the payment has not reached a terminal status after 36 hours. Check the payment in the BlinkPay merchant portal and update the order manually.', 'blinkpay-nz-for-woocommerce' ) );
 		}
 	}
 

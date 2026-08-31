@@ -24,7 +24,7 @@ Customers are sent to BlinkPay's hosted gateway, choose their bank, and authoris
 1. At checkout the plugin creates a quick payment and redirects the customer to BlinkPay's hosted gateway.
 2. The customer picks their bank and authorises the payment.
 3. Back on your site, the plugin confirms the outcome through the BlinkPay API. A completed payment marks the order Processing/Completed; a rejected consent or payment marks it Failed.
-4. Anything still in flight parks the order On hold and WP-Cron re-checks every minute for up to 30 minutes.
+4. Anything still in flight parks the order On hold and WP-Cron re-checks it — every minute at first, backing off to every 2 hours — for up to 36 hours, so a payment that settles overnight completes automatically.
 
 The return redirect alone is never treated as proof of payment — the outcome is always confirmed through the API.
 
@@ -71,7 +71,7 @@ Check that the store currency is NZD and that both credentials are set.
 
 = Orders stay on hold =
 
-The payment outcome was still pending when the customer returned; WP-Cron re-checks it every minute for 30 minutes. If your host disables WP-Cron, trigger `wp-cron.php` from a real cron job. Once the checks are exhausted, verify the payment in the BlinkPay merchant portal and update the order manually.
+Bank settlement is asynchronous, and a payment made in the evening may not settle until the following morning. WP-Cron re-checks the payment — every minute at first, backing off to every 2 hours — for up to 36 hours, and the order moves to Processing automatically once the payment settles. If your host disables WP-Cron, trigger `wp-cron.php` from a real cron job. Only if the checks are exhausted after 36 hours should you verify the payment in the BlinkPay merchant portal and update the order manually.
 
 = Does a WooCommerce refund send money back to the customer? =
 

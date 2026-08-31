@@ -53,7 +53,7 @@ class StatusCheckSchedulingTest extends TestCase {
 		$this->assertCount( 1, $events );
 		$this->assertSame( WC_BlinkPay_Gateway::STATUS_CHECK_HOOK, $events[0]['hook'] );
 		$this->assertSame( array( 123 ), $events[0]['args'] );
-		$this->assertGreaterThanOrEqual( $before + WC_BlinkPay_Gateway::STATUS_CHECK_DELAY, $events[0]['timestamp'] );
+		$this->assertGreaterThanOrEqual( $before + WC_BlinkPay_Gateway::STATUS_CHECK_SCHEDULE[0][1], $events[0]['timestamp'] );
 	}
 
 	public function test_a_failed_quick_payment_creation_schedules_nothing() {
