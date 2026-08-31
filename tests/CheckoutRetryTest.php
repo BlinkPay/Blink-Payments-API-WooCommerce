@@ -254,6 +254,24 @@ class CheckoutRetryTest extends TestCase {
 		$this->assertSame( 'on-hold', $order->get_status(), 'The unresolved attempt is parked for the deferred checks to settle.' );
 	}
 
+	public function test_a_retry_whose_fresh_creation_fails_leaves_no_stale_attempt_behind() {
+		$order = $this->register_order( 710 );
+		$order->update_meta_data( '_blinkpay_quick_payment_id', 'qp-dead' );
+		$order->update_meta_data( '_blinkpay_status_checks', 45 );
+
+		// The previous consent is confirmed rejected, but creating the fresh
+		// quick payment fails: no canned create response models an API error.
+		$client  = new WC_BlinkPay_Fake_API_Client( array(), array( $this->consent( 'Rejected' ) ) );
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		$result = $gateway->process_payment( 710 );
+
+		$this->assertSame( 'failure', $result['result'] );
+		$this->assertSame( 'failed', $order->get_status(), 'No fresh attempt exists: the order must not sit pending.' );
+		$this->assertSame( '', $order->get_meta( '_blinkpay_quick_payment_id' ), 'The dead quick payment ID must not survive as if an attempt were live.' );
+		$this->assertFalse( $gateway->has_unresolved_quick_payment( $order ), 'A stranded order must not be exempt from the unpaid-order sweep.' );
+	}
+
 	public function test_a_retry_is_refused_while_another_process_holds_the_lock() {
 		$order = $this->register_order( 706 );
 		$order->update_meta_data( '_blinkpay_quick_payment_id', 'qp-706' );

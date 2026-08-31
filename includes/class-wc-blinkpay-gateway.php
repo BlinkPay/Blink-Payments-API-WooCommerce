@@ -352,14 +352,6 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		// — so a fresh quick payment is safe to create over it.
 		$this->reset_payment_attempt_state( $order );
 
-		// confirm_quick_payment() marked the order failed as it confirmed
-		// that outcome, but the customer is standing at checkout paying it
-		// again: it goes back to pending — the state of a checkout in
-		// progress — so they are not shown a failed order while they pay.
-		if ( $order->has_status( 'failed' ) ) {
-			$order->update_status( 'pending', __( 'The customer is retrying the payment; a fresh BlinkPay quick payment is being created over the failed attempt.', 'blinkpay-nz-for-woocommerce' ) );
-		}
-
 		return null;
 	}
 
@@ -369,11 +361,16 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	 * payment, the check counter may already be exhausted and the mismatch
 	 * flag is per payment — left behind, they would misdirect a later refund
 	 * at the dead payment, deny the new debit its deferred checks and
-	 * short-circuit its first poll.
+	 * short-circuit its first poll. The quick payment ID itself is discarded
+	 * too: it belongs to the dead attempt, and were it left behind, a fresh
+	 * creation that fails would leave the order looking like it still had a
+	 * live attempt — exempt from the unpaid-order sweep with nothing polling
+	 * it.
 	 *
 	 * @param WC_Order $order The order.
 	 */
 	private function reset_payment_attempt_state( $order ) {
+		$order->delete_meta_data( '_blinkpay_quick_payment_id' );
 		$order->delete_meta_data( '_blinkpay_payment_id' );
 		$order->delete_meta_data( '_blinkpay_accepted_reason' );
 		$order->delete_meta_data( '_blinkpay_status_checks' );
@@ -444,6 +441,15 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		// The key is now permanently bound to this quick payment, so a later
 		// attempt (after a cancelled or rejected consent) must mint a fresh one.
 		$this->reset_idempotency_key( $order, 'quick_payment' );
+
+		// A retried order was left failed by its confirmed previous outcome;
+		// the fresh quick payment now exists, so it returns to pending — the
+		// state of a checkout in progress. Only after creation succeeds: a
+		// failed creation must leave the order failed, not advertising an
+		// attempt that does not exist.
+		if ( $order->has_status( 'failed' ) ) {
+			$order->update_status( 'pending', __( 'The customer is retrying the payment; a fresh BlinkPay quick payment has been created over the failed attempt.', 'blinkpay-nz-for-woocommerce' ) );
+		}
 		/* translators: %s: quick payment ID */
 		$order->add_order_note( sprintf( __( 'BlinkPay quick payment %s created; customer redirected to the Blink gateway.', 'blinkpay-nz-for-woocommerce' ), $response['quick_payment_id'] ) );
 		$order->save();
