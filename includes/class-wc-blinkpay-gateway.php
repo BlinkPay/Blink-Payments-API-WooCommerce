@@ -272,19 +272,26 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	 */
 	private function start_quick_payment( $order ) {
 		$payload = array(
-			'flow'                       => array(
+			'flow'   => array(
 				'detail' => array(
 					'type'         => 'gateway',
 					'redirect_uri' => $this->get_gateway_return_url( $order ),
 				),
 			),
-			'amount'                     => array(
+			'amount' => array(
 				'currency' => 'NZD',
 				'total'    => $this->format_amount( $order->get_total() ),
 			),
-			'pcr'                        => $this->build_pcr( $this->pcr_particulars, $order->get_order_number() ),
-			'hashed_customer_identifier' => hash( 'sha256', strtolower( (string) $order->get_billing_email() ) ),
+			'pcr'    => $this->build_pcr( $this->pcr_particulars, $order->get_order_number(), (string) $order->get_id() ),
 		);
+
+		// Sent only when a genuinely per-customer value exists: hashing a
+		// blank one would send the same constant for every such order, making
+		// them all look like one customer to Blink's risk and velocity checks.
+		$identifier = $this->get_customer_identifier( $order );
+		if ( '' !== $identifier ) {
+			$payload['hashed_customer_identifier'] = hash( 'sha256', $identifier );
+		}
 
 		$payload = apply_filters( 'wc_blinkpay_quick_payment_payload', $payload, $order );
 
@@ -818,7 +825,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		$payload = array(
 			'type'       => $is_full ? 'full_refund' : 'partial_refund',
 			'payment_id' => $payment_id,
-			'pcr'        => $this->build_pcr( $this->pcr_particulars, $order->get_order_number() ),
+			'pcr'        => $this->build_pcr( $this->pcr_particulars, $order->get_order_number(), (string) $order->get_id() ),
 		);
 		if ( ! $is_full ) {
 			$payload['amount'] = array(
@@ -1089,20 +1096,52 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	}
 
 	/**
+	 * The per-customer value behind hashed_customer_identifier. A registered
+	 * customer is identified by their WooCommerce customer ID — the "customer
+	 * internal ID" the API describes — which is stable across billing-email
+	 * changes. A guest has no such ID, so their lowercased billing email
+	 * stands in, as it did for every order before customer IDs were used.
+	 * When neither exists there is no identifier: the caller must omit the
+	 * field rather than hash the empty string, which would send the same
+	 * constant for every such order.
+	 *
+	 * @param WC_Order $order The order.
+	 * @return string The identifier to hash, or '' when there is none.
+	 */
+	private function get_customer_identifier( $order ) {
+		$customer_id = (int) $order->get_customer_id();
+		if ( $customer_id > 0 ) {
+			return 'customer-' . $customer_id;
+		}
+
+		return strtolower( (string) $order->get_billing_email() );
+	}
+
+	/**
 	 * Builds a PCR (particulars, code, reference) block within the API's
-	 * 12-character, restricted-charset limits.
+	 * 12-character, restricted-charset limits. The reference carries the
+	 * customer-facing order number, which sequential-order-number plugins can
+	 * prefix beyond 12 characters, so it may truncate; the code carries the
+	 * numeric order ID, which always fits, giving reconciliation an exact key
+	 * that does not depend on the truncated reference.
 	 *
 	 * @param string $particulars The particulars.
 	 * @param string $reference   The reference, typically the order number.
+	 * @param string $code        The code, typically the order ID.
 	 * @return array
 	 */
-	public function build_pcr( $particulars, $reference ) {
+	public function build_pcr( $particulars, $reference, $code = '' ) {
 		$particulars = $this->sanitise_pcr_field( $particulars );
 		if ( '' === $particulars ) {
 			$particulars = 'Order';
 		}
 
 		$pcr = array( 'particulars' => $particulars );
+
+		$code = $this->sanitise_pcr_field( $code );
+		if ( '' !== $code ) {
+			$pcr['code'] = $code;
+		}
 
 		$reference = $this->sanitise_pcr_field( $reference );
 		if ( '' !== $reference ) {

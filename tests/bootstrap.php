@@ -296,6 +296,15 @@ class WC_BlinkPay_Test_Order {
 	/** @var string */
 	private $status = 'pending';
 
+	/** @var string */
+	private $order_number = '';
+
+	/** @var int */
+	private $customer_id = 0;
+
+	/** @var string */
+	private $billing_email = 'customer@example.test';
+
 	public function __construct( $id ) {
 		$this->id = $id;
 	}
@@ -325,7 +334,19 @@ class WC_BlinkPay_Test_Order {
 	}
 
 	public function get_order_number() {
-		return (string) $this->id;
+		return '' !== $this->order_number ? $this->order_number : (string) $this->id;
+	}
+
+	public function set_order_number( $order_number ) {
+		$this->order_number = $order_number;
+	}
+
+	public function get_customer_id() {
+		return $this->customer_id;
+	}
+
+	public function set_customer_id( $customer_id ) {
+		$this->customer_id = $customer_id;
 	}
 
 	public function get_currency() {
@@ -337,7 +358,11 @@ class WC_BlinkPay_Test_Order {
 	}
 
 	public function get_billing_email() {
-		return 'customer@example.test';
+		return $this->billing_email;
+	}
+
+	public function set_billing_email( $billing_email ) {
+		$this->billing_email = $billing_email;
 	}
 
 	public function get_meta( $key = '' ) {
