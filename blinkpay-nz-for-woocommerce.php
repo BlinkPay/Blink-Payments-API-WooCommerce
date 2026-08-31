@@ -77,6 +77,36 @@ function wc_blinkpay_init() {
 			}
 		}
 	);
+
+	// WooCommerce renders its "Refund manually" button unconditionally, and a
+	// manual refund records money as returned without BlinkPay involvement.
+	add_action( 'admin_head', 'wc_blinkpay_hide_manual_refund_button' );
+}
+
+/**
+ * Hides WooCommerce's "Refund manually" button on orders paid with BlinkPay.
+ * A manual refund marks the order as refunded while no money has moved and
+ * no account number has been retrieved, so every BlinkPay refund must go
+ * through the "Refund via BlinkPay" button instead.
+ */
+function wc_blinkpay_hide_manual_refund_button() {
+	if ( ! function_exists( 'get_current_screen' ) ) {
+		return;
+	}
+
+	$screen = get_current_screen();
+	if ( ! $screen || ! in_array( $screen->id, array( 'shop_order', 'woocommerce_page_wc-orders' ), true ) ) {
+		return;
+	}
+
+	// HPOS order screens carry the order in ?id=, the legacy post editor in ?post=.
+	// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only screen detection.
+	$order_id = isset( $_GET['id'] ) ? absint( $_GET['id'] ) : ( isset( $_GET['post'] ) ? absint( $_GET['post'] ) : 0 );
+	$order    = $order_id ? wc_get_order( $order_id ) : false;
+
+	if ( $order && 'blinkpay' === $order->get_payment_method() ) {
+		echo '<style>.wc-order-refund-items .do-manual-refund { display: none !important; }</style>';
+	}
 }
 
 /**

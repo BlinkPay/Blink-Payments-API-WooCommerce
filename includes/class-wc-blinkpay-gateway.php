@@ -439,6 +439,11 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		}
 
 		if ( 'AcceptedSettlementCompleted' === $status ) {
+			if ( ! empty( $payment['accepted_reason'] ) ) {
+				// Card and bank payments refund differently, so how the
+				// payment settled is needed again at refund time.
+				$order->update_meta_data( '_blinkpay_accepted_reason', $payment['accepted_reason'] );
+			}
 			$order->payment_complete( $payment_id );
 			/* translators: %s: payment ID */
 			$order->add_order_note( sprintf( __( 'BlinkPay payment %s completed.', 'blinkpay-nz-for-woocommerce' ), $payment_id ) );
@@ -553,11 +558,13 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	}
 
 	/**
-	 * Handles a refund using BlinkPay's account_number refund type, the only
-	 * type supported. It does not move money: it retrieves the customer's
-	 * bank account number so the merchant can transfer the refund from their
-	 * own bank. The account number is recorded as an order note, and the
-	 * WooCommerce refund becomes the record of that manual transfer.
+	 * Handles a refund through the BlinkPay refunds API. How the payment
+	 * settled (its accepted_reason) decides the path: a card payment is
+	 * refunded through the card network with a money-moving type —
+	 * full_refund when the whole order total is being refunded,
+	 * partial_refund (carrying the amount) otherwise — while a bank payment,
+	 * or a payment from before the reason was recorded, uses the
+	 * account_number type; see process_account_number_refund().
 	 *
 	 * @param int        $order_id The order ID.
 	 * @param float|null $amount   The refund amount.
@@ -585,6 +592,96 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 
 		$client = $this->get_api_client();
 
+		if ( 'card_network_accepted' !== $order->get_meta( '_blinkpay_accepted_reason' ) ) {
+			return $this->process_account_number_refund( $order, $client, $payment_id, $amount, $reason );
+		}
+
+		// Refunding the whole order total refunds the whole payment; anything
+		// less is a partial refund and must carry the amount to the API.
+		$is_full = $this->format_amount( $amount ) === $this->format_amount( $order->get_total() );
+
+		$payload = array(
+			'type'       => $is_full ? 'full_refund' : 'partial_refund',
+			'payment_id' => $payment_id,
+			'pcr'        => $this->build_pcr( $this->pcr_particulars, $order->get_order_number() ),
+		);
+		if ( ! $is_full ) {
+			$payload['amount'] = array(
+				'currency' => 'NZD',
+				'total'    => $this->format_amount( $amount ),
+			);
+		}
+
+		$response = $client->create_refund( $payload );
+
+		if ( is_wp_error( $response ) || empty( $response['refund_id'] ) ) {
+			$detail = is_wp_error( $response ) ? $response->get_error_message() : __( 'No refund ID was returned.', 'blinkpay-nz-for-woocommerce' );
+			return new WP_Error( 'blinkpay_refund_failed', $detail );
+		}
+
+		return $this->finalise_money_transfer_refund( $order, $client, $amount, $reason, $response['refund_id'] );
+	}
+
+	/**
+	 * Confirms a money-transfer refund after creation. A 201 does not mean
+	 * the refund has been processed — the status must be checked through the
+	 * GET endpoint — so a refund already reported failed rejects the
+	 * WooCommerce refund rather than recording money that never moved, and
+	 * anything else is noted with what the merchant must still do: authorise
+	 * it at the consent redirect if the bank requires that, or verify it
+	 * completes in the merchant portal.
+	 *
+	 * @param WC_Order               $order     The order.
+	 * @param WC_BlinkPay_API_Client $client    The API client.
+	 * @param float                  $amount    The refund amount.
+	 * @param string                 $reason    The refund reason.
+	 * @param string                 $refund_id The created refund ID.
+	 * @return bool|WP_Error
+	 */
+	private function finalise_money_transfer_refund( $order, $client, $amount, $reason, $refund_id ) {
+		$refund = $client->get_refund( $refund_id );
+		$status = ! is_wp_error( $refund ) && isset( $refund['status'] ) ? $refund['status'] : '';
+
+		if ( 'failed' === $status ) {
+			/* translators: %s: refund ID */
+			return new WP_Error( 'blinkpay_refund_failed', sprintf( __( 'BlinkPay reported refund %s as failed; no money has moved.', 'blinkpay-nz-for-woocommerce' ), $refund_id ) );
+		}
+
+		if ( 'completed' === $status ) {
+			/* translators: 1: amount, 2: refund ID, 3: reason */
+			$note = __( 'BlinkPay refund of NZD %1$s completed; the money has been transferred back to the account the customer paid from. BlinkPay refund reference: %2$s. %3$s', 'blinkpay-nz-for-woocommerce' );
+		} else {
+			/* translators: 1: amount, 2: refund ID, 3: reason */
+			$note = __( 'BlinkPay accepted the refund request of NZD %1$s and is transferring the money back to the account the customer paid from. Verify it reaches completed in the BlinkPay merchant portal. BlinkPay refund reference: %2$s. %3$s', 'blinkpay-nz-for-woocommerce' );
+		}
+
+		$order->add_order_note( sprintf( $note, $this->format_amount( $amount ), $refund_id, $reason ? $reason : '' ) );
+
+		$consent_redirect = ! is_wp_error( $refund ) && ! empty( $refund['detail']['consent_redirect'] ) ? $refund['detail']['consent_redirect'] : '';
+		if ( $consent_redirect ) {
+			/* translators: %s: consent redirect URI */
+			$order->add_order_note( sprintf( __( 'This refund needs your authorisation: visit %s to authorise the refund payment from your bank.', 'blinkpay-nz-for-woocommerce' ), $consent_redirect ) );
+		}
+
+		return true;
+	}
+
+	/**
+	 * Refunds a bank-settled payment with BlinkPay's account_number refund
+	 * type, which does not move money: it retrieves the customer's bank
+	 * account number so the merchant can transfer the refund from their own
+	 * bank. The account number is recorded as a private order note, and a
+	 * customer-visible note makes the outstanding manual transfer obvious on
+	 * the order rather than leaving the obligation buried in the private note.
+	 *
+	 * @param WC_Order               $order      The order.
+	 * @param WC_BlinkPay_API_Client $client     The API client.
+	 * @param string                 $payment_id The BlinkPay payment ID.
+	 * @param float                  $amount     The refund amount.
+	 * @param string                 $reason     The refund reason.
+	 * @return bool|WP_Error
+	 */
+	private function process_account_number_refund( $order, $client, $payment_id, $amount, $reason ) {
 		$response = $client->create_refund(
 			array(
 				'type'       => 'account_number',
@@ -604,12 +701,23 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		$order->add_order_note(
 			sprintf(
 				/* translators: 1: amount, 2: bank account number, 3: refund ID, 4: reason */
-				__( 'BlinkPay does not transfer refunds automatically. Pay NZD %1$s to the customer\'s account %2$s from your own bank. BlinkPay refund reference: %3$s. %4$s', 'blinkpay-nz-for-woocommerce' ),
+				__( 'This payment was settled by bank transfer, so BlinkPay\'s refund does not move money. Pay NZD %1$s to the customer\'s account %2$s from your own bank. BlinkPay refund reference: %3$s. %4$s', 'blinkpay-nz-for-woocommerce' ),
 				$this->format_amount( $amount ),
 				$refund['account_number'],
 				$response['refund_id'],
 				$reason ? $reason : ''
 			)
+		);
+
+		// The customer sees (and is emailed) that the refund arrives by
+		// manual bank transfer; the account number stays in the private note.
+		$order->add_order_note(
+			sprintf(
+				/* translators: %s: amount */
+				__( 'Your refund of NZD %s will be paid to your bank account by bank transfer.', 'blinkpay-nz-for-woocommerce' ),
+				$this->format_amount( $amount )
+			),
+			1
 		);
 
 		return true;

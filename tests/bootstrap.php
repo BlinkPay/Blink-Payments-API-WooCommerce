@@ -236,6 +236,9 @@ class WC_BlinkPay_Test_Order {
 	/** @var string[] */
 	public $notes = array();
 
+	/** @var string[] */
+	public $customer_notes = array();
+
 	/** @var string */
 	private $status = 'pending';
 
@@ -299,8 +302,16 @@ class WC_BlinkPay_Test_Order {
 		return $this->id;
 	}
 
-	public function add_order_note( $note ) {
-		$this->notes[] = $note;
+	public function add_order_note( $note, $is_customer_note = 0 ) {
+		if ( $is_customer_note ) {
+			$this->customer_notes[] = $note;
+		} else {
+			$this->notes[] = $note;
+		}
+	}
+
+	public function get_transaction_id() {
+		return $this->get_meta( '_transaction_id' );
 	}
 
 	public function get_status() {
@@ -365,19 +376,32 @@ class WC_BlinkPay_Fake_API_Client {
 	/** @var string[] Quick payment IDs retrieved, in order. */
 	public $get_calls = array();
 
+	/** @var array[] Refund payloads sent, in order. */
+	public $refund_calls = array();
+
 	/** @var array */
 	private $create_responses;
 
 	/** @var array */
 	private $get_responses;
 
+	/** @var array */
+	private $refund_responses;
+
+	/** @var array */
+	private $get_refund_responses;
+
 	/**
-	 * @param array $create_responses Responses returned in order, one per create call.
-	 * @param array $get_responses    Responses returned in order per retrieval; the last repeats.
+	 * @param array $create_responses     Responses returned in order, one per create call.
+	 * @param array $get_responses        Responses returned in order per retrieval; the last repeats.
+	 * @param array $refund_responses     Responses returned in order, one per refund creation.
+	 * @param array $get_refund_responses Responses returned in order, one per refund retrieval.
 	 */
-	public function __construct( array $create_responses = array(), array $get_responses = array() ) {
-		$this->create_responses = $create_responses;
-		$this->get_responses    = $get_responses;
+	public function __construct( array $create_responses = array(), array $get_responses = array(), array $refund_responses = array(), array $get_refund_responses = array() ) {
+		$this->create_responses     = $create_responses;
+		$this->get_responses        = $get_responses;
+		$this->refund_responses     = $refund_responses;
+		$this->get_refund_responses = $get_refund_responses;
 	}
 
 	public function is_configured() {
@@ -401,5 +425,23 @@ class WC_BlinkPay_Fake_API_Client {
 		}
 
 		return count( $this->get_responses ) > 1 ? array_shift( $this->get_responses ) : $this->get_responses[0];
+	}
+
+	public function create_refund( array $payload ) {
+		$this->refund_calls[] = $payload;
+
+		if ( ! $this->refund_responses ) {
+			return new WP_Error( 'blinkpay_test', 'No canned refund response.' );
+		}
+
+		return array_shift( $this->refund_responses );
+	}
+
+	public function get_refund( $refund_id ) {
+		if ( ! $this->get_refund_responses ) {
+			return new WP_Error( 'blinkpay_test', 'No canned refund retrieval response.' );
+		}
+
+		return array_shift( $this->get_refund_responses );
 	}
 }
