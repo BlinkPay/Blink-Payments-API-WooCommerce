@@ -21,8 +21,9 @@ Customers are sent to BlinkPay's hosted gateway, choose their bank, and authoris
 2. In WordPress admin, go to **Plugins → Add New → Upload Plugin**, upload the ZIP and activate it.
 3. Go to **WooCommerce → Settings → Payments → BlinkPay**.
 4. Enter your **client ID** and **client secret**, leave **Sandbox mode** ticked, and enable the gateway.
-5. Place a test order. Sandbox payments never move real money.
-6. When you are ready to go live, replace the credentials with your production pair and untick **Sandbox mode**.
+5. Copy the **Callback URL** shown in the settings and register it in the BlinkPay client portal under **Settings → API** for the **sandbox** environment. Redirect URIs must be whitelisted before payments can be created, and each environment keeps its own whitelist.
+6. Place a test order. Sandbox payments never move real money.
+7. When you are ready to go live, replace the credentials with your production pair, untick **Sandbox mode**, and register the callback URL for the **production** environment.
 
 ### Keeping the client secret out of the database (recommended)
 
@@ -68,6 +69,7 @@ Refunding from the order screen uses BlinkPay's `account_number` refund type, wh
 ## Troubleshooting
 
 - **The gateway does not appear at checkout** — check the store currency is NZD and both credentials are set.
+- **Every payment fails with "We could not start your BlinkPay payment"** — the site's callback URL is probably not whitelisted. Copy the **Callback URL** from the gateway settings and register it in the BlinkPay client portal under **Settings → API** for the environment in use; sandbox and production each keep their own whitelist. The notes on the failed order name the exact error.
 - **Orders stay on hold** — bank settlement is asynchronous, and an evening payment may not settle until the following morning; WP-Cron re-checks it on a backing-off schedule for up to 36 hours and completes the order automatically once the payment settles. If your host disables WP-Cron, trigger it from a real cron job. Only if the checks are exhausted after 36 hours should you verify the payment in the BlinkPay merchant portal and update the order manually.
 - **Debug logging** — enable it in the gateway settings, then read **WooCommerce → Status → Logs** (source `blinkpay`). Credentials and tokens are never written to the log.
 

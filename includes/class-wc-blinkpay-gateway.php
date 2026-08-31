@@ -133,6 +133,11 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 				'description' => __( 'Issued by BlinkPay for the selected environment. For stronger protection define the BLINKPAY_CLIENT_SECRET constant in wp-config.php instead of storing it in the database.', 'blinkpay-nz-for-woocommerce' ),
 				'default'     => '',
 			),
+			'callback_url'    => array(
+				'title'       => __( 'Callback URL', 'blinkpay-nz-for-woocommerce' ),
+				'type'        => 'callback_url',
+				'description' => __( 'Register this URL in the BlinkPay client portal under Settings > API before taking payments. Redirect URIs must be whitelisted separately for the sandbox and production environments, so register it for both.', 'blinkpay-nz-for-woocommerce' ),
+			),
 			'pcr_particulars' => array(
 				'title'       => __( 'Bank statement particulars', 'blinkpay-nz-for-woocommerce' ),
 				'type'        => 'text',
@@ -148,6 +153,44 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 				'default'     => 'no',
 			),
 		);
+	}
+
+	/**
+	 * Renders the read-only, copyable callback URL row on the settings screen.
+	 * WC_Settings_API dispatches here for the callback_url field type. The
+	 * input is unnamed, so saving the settings never persists the value: it is
+	 * always derived from the current site URL.
+	 *
+	 * @param string $key  The field key.
+	 * @param array  $data The field definition.
+	 * @return string
+	 */
+	public function generate_callback_url_html( $key, $data ) {
+		ob_start();
+		?>
+		<tr valign="top">
+			<th scope="row" class="titledesc">
+				<label><?php echo wp_kses_post( $data['title'] ); ?></label>
+			</th>
+			<td class="forminp">
+				<input class="input-text regular-input" type="text" value="<?php echo esc_attr( $this->get_callback_url() ); ?>" readonly="readonly" onfocus="this.select();" />
+				<p class="description"><?php echo wp_kses_post( $data['description'] ); ?></p>
+			</td>
+		</tr>
+		<?php
+		return ob_get_clean();
+	}
+
+	/**
+	 * The callback URL field is display-only: never persist a value for it,
+	 * so it can never go stale if the site URL changes.
+	 *
+	 * @param string $key   The field key.
+	 * @param mixed  $value The posted value.
+	 * @return string
+	 */
+	public function validate_callback_url_field( $key, $value ) {
+		return '';
 	}
 
 	/**
@@ -226,6 +269,16 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 				$this->reset_idempotency_key( $order, 'quick_payment' );
 				$order->save();
 				$order->add_order_note( __( 'BlinkPay rejected the stored idempotency key because it is already bound to a finished payment attempt. The key has been discarded; the customer can retry checkout and a fresh payment will be created.', 'blinkpay-nz-for-woocommerce' ) );
+			}
+			if ( is_wp_error( $response ) && $this->is_unregistered_redirect_uri_error( $response ) ) {
+				$order->add_order_note(
+					sprintf(
+						/* translators: 1: callback URL, 2: environment name (sandbox or production) */
+						__( 'BlinkPay rejected the redirect URI, most likely because this site\'s callback URL is not whitelisted for your merchant account. Register %1$s in the BlinkPay client portal under Settings > API for the %2$s environment (each environment keeps its own whitelist), then try again.', 'blinkpay-nz-for-woocommerce' ),
+						$this->get_callback_url(),
+						$this->sandbox ? 'sandbox' : 'production'
+					)
+				);
 			}
 			$detail = is_wp_error( $response ) ? $response->get_error_message() : __( 'No redirect URI was returned.', 'blinkpay-nz-for-woocommerce' );
 			/* translators: %s: API error detail */
@@ -563,6 +616,17 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	}
 
 	/**
+	 * The base callback URL for this site, which the merchant must whitelist
+	 * in the BlinkPay client portal for each environment. Redirect URI
+	 * matching is prefix-based, so this one URL covers every order.
+	 *
+	 * @return string
+	 */
+	public function get_callback_url() {
+		return WC()->api_request_url( 'blinkpay_return' );
+	}
+
+	/**
 	 * The URL Blink redirects the customer back to after the gateway journey.
 	 *
 	 * @param WC_Order $order The order.
@@ -574,7 +638,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 				'order_id' => $order->get_id(),
 				'key'      => $order->get_order_key(),
 			),
-			WC()->api_request_url( 'blinkpay_return' )
+			$this->get_callback_url()
 		);
 	}
 
@@ -626,6 +690,24 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		$data = $error->get_error_data();
 
 		return is_array( $data ) && isset( $data['status'] ) && 409 === $data['status'];
+	}
+
+	/**
+	 * Whether an API error looks like a consent-creation rejection for an
+	 * unregistered redirect URI. The API reports it as a client-error
+	 * validation failure whose detail names the redirect URI, so the match is
+	 * heuristic — a 4xx mentioning "redirect" — and the note it produces only
+	 * names the likely cause.
+	 *
+	 * @param WP_Error $error The API error.
+	 * @return bool
+	 */
+	private function is_unregistered_redirect_uri_error( $error ) {
+		$data   = $error->get_error_data();
+		$status = is_array( $data ) && isset( $data['status'] ) ? (int) $data['status'] : 0;
+
+		return $status >= 400 && $status < 500
+			&& false !== stripos( $error->get_error_message(), 'redirect' );
 	}
 
 	/**

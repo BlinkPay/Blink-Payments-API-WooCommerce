@@ -55,8 +55,9 @@ This plugin connects to the BlinkPay Debit API, a third-party service operated b
 1. In WordPress admin, go to **Plugins → Add New**, search for "BlinkPay NZ for WooCommerce", then install and activate it.
 2. Go to **WooCommerce → Settings → Payments → BlinkPay**.
 3. Enter your **client ID** and **client secret**, leave **Sandbox mode** ticked, and enable the gateway.
-4. Place a test order. Sandbox payments never move real money.
-5. When you are ready to go live, replace the credentials with your production pair and untick **Sandbox mode**.
+4. Copy the **Callback URL** shown in the settings and register it in the BlinkPay client portal under **Settings → API** for the **sandbox** environment. Redirect URIs must be whitelisted before payments can be created, and each environment keeps its own whitelist.
+5. Place a test order. Sandbox payments never move real money.
+6. When you are ready to go live, replace the credentials with your production pair, untick **Sandbox mode**, and register the callback URL for the **production** environment.
 
 To keep the client secret out of the database, add the following to `wp-config.php` instead of saving credentials in the settings screen:
 
@@ -68,6 +69,10 @@ To keep the client secret out of the database, add the following to `wp-config.p
 = The gateway does not appear at checkout =
 
 Check that the store currency is NZD and that both credentials are set.
+
+= Every payment fails with "We could not start your BlinkPay payment" =
+
+The most likely cause is that this site's callback URL is not whitelisted for your merchant account. Copy the **Callback URL** from the gateway settings and register it in the BlinkPay client portal under **Settings → API** for the environment you are using — sandbox and production each keep their own whitelist. The notes on the failed order name the exact error.
 
 = Orders stay on hold =
 

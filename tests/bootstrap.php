@@ -44,6 +44,14 @@ function sanitize_text_field( $str ) {
 	return trim( preg_replace( '/[\r\n\t ]+/', ' ', strip_tags( (string) $str ) ) );
 }
 
+function esc_attr( $text ) {
+	return htmlspecialchars( (string) $text, ENT_QUOTES );
+}
+
+function wp_kses_post( $content ) {
+	return $content;
+}
+
 /**
  * Thrown by the wp_safe_redirect() stub so tests can observe the redirect
  * target instead of exiting the process; the message carries the location.
