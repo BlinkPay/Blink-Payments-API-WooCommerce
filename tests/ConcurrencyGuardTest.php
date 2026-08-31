@@ -108,6 +108,17 @@ class WC_BlinkPay_Double_Checkout_Client extends WC_BlinkPay_Fake_API_Client {
 	}
 }
 
+/**
+ * A client that throws mid-refund, standing in for a third-party hook or
+ * transport layer exploding while the per-order lock is held.
+ */
+class WC_BlinkPay_Throwing_Refund_Client extends WC_BlinkPay_Fake_API_Client {
+
+	public function create_refund( array $payload ) {
+		throw new RuntimeException( 'A third-party hook exploded mid-refund.' );
+	}
+}
+
 class ConcurrencyGuardTest extends TestCase {
 
 	protected function setUp(): void {
@@ -470,6 +481,24 @@ class ConcurrencyGuardTest extends TestCase {
 		$this->assertSame( 1, $order->get_meta( '_blinkpay_status_checks' ) );
 		$this->assertSame( '', $order->get_meta( '_blinkpay_lock_retries' ), 'A check that runs must clear the contended-retry counter.' );
 		$this->assertFalse( $this->order_lock_held( 405 ), 'The lock must be released once the check finishes.' );
+	}
+
+	public function test_the_lock_is_released_when_the_guarded_body_throws() {
+		$order = $this->register_order( 414 );
+		$order->update_meta_data( '_blinkpay_payment_id', 'pay-414' );
+		$order->update_meta_data( '_blinkpay_accepted_reason', 'card_network_accepted' );
+		$order->payment_complete( 'pay-414' );
+
+		$gateway = new WC_BlinkPay_Test_Gateway( new WC_BlinkPay_Throwing_Refund_Client() );
+
+		try {
+			$gateway->process_refund( 414, 49.95, '' );
+			$this->fail( 'The throwing client should have propagated.' );
+		} catch ( RuntimeException $exception ) {
+			$this->assertSame( 'A third-party hook exploded mid-refund.', $exception->getMessage() );
+		}
+
+		$this->assertFalse( $this->order_lock_held( 414 ), 'An exception inside the guarded body must not leak the lock for the full timeout.' );
 	}
 
 	public function test_contended_cron_retries_are_bounded() {

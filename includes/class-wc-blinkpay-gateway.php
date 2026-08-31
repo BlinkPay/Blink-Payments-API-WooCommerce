@@ -288,26 +288,30 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			return array( 'result' => 'failure' );
 		}
 
-		// Re-read now the lock is held, as on the return page: the snapshot
-		// above may predate a completion by the previous lock holder.
-		$order = wc_get_order( $order_id );
+		// Released in a finally: order notes and payment_complete() run
+		// third-party hooks, and an exception in one must not leak the lock
+		// for the full timeout.
+		try {
+			// Re-read now the lock is held, as on the return page: the
+			// snapshot above may predate a completion by the previous holder.
+			$order = wc_get_order( $order_id );
 
-		if ( ! $order || $order->is_paid() ) {
+			if ( ! $order || $order->is_paid() ) {
+				return array(
+					'result'   => 'success',
+					'redirect' => $order ? $order->get_checkout_order_received_url() : wc_get_checkout_url(),
+				);
+			}
+
+			$result = $this->resume_existing_quick_payment( $order );
+			if ( null === $result ) {
+				$result = $this->start_quick_payment( $order );
+			}
+
+			return $result;
+		} finally {
 			$this->release_order_lock( $order_id, $lock );
-			return array(
-				'result'   => 'success',
-				'redirect' => $order ? $order->get_checkout_order_received_url() : wc_get_checkout_url(),
-			);
 		}
-
-		$result = $this->resume_existing_quick_payment( $order );
-		if ( null === $result ) {
-			$result = $this->start_quick_payment( $order );
-		}
-
-		$this->release_order_lock( $order_id, $lock );
-
-		return $result;
 	}
 
 	/**
@@ -635,43 +639,45 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			exit;
 		}
 
-		// Re-read now the lock is held: the snapshot above may predate a
-		// completion by the process that has just released the lock, and a
-		// stale failure applied over it would show a paid order as failed.
-		$order = wc_get_order( $order_id );
+		// The lock is released in a finally — a hook exception must not leak
+		// it — and before the redirect: exit does not unwind the stack, so a
+		// release placed after wp_safe_redirect() would never run.
+		try {
+			// Re-read now the lock is held: the snapshot above may predate a
+			// completion by the process that has just released the lock, and
+			// a stale failure applied over it would show a paid order as
+			// failed.
+			$order = wc_get_order( $order_id );
 
-		if ( ! $order || $order->is_paid() ) {
+			if ( ! $order || $order->is_paid() ) {
+				$destination = $order ? $order->get_checkout_order_received_url() : wc_get_checkout_url();
+			} else {
+				// Any status other than blank or "pending" reports a
+				// non-success outcome, including values this version does not
+				// recognise. It is a hint, never terminal proof: a stale
+				// "cancelled" replayed from browser history must not fail an
+				// order whose debit is in flight.
+				if ( '' !== $status && 'pending' !== $status ) {
+					/* translators: %s: gateway status parameter */
+					$order->add_order_note( sprintf( __( 'The customer returned from the BlinkPay gateway with status %s; confirming the outcome through the API.', 'blinkpay-nz-for-woocommerce' ), $status ) );
+				}
+
+				if ( 'failed' === $this->confirm_quick_payment( $order ) ) {
+					// Keyed off the API-confirmed outcome, not the replayable
+					// URL parameter: every confirmed failure path means no
+					// money moved, so the message stays accurate by
+					// construction.
+					wc_add_notice( __( 'Your payment was not completed and you have not been charged. Please try again.', 'blinkpay-nz-for-woocommerce' ), 'error' );
+					$destination = $order->get_checkout_payment_url();
+				} else {
+					$destination = $order->get_checkout_order_received_url();
+				}
+			}
+		} finally {
 			$this->release_order_lock( $order_id, $lock );
-			wp_safe_redirect( $order ? $order->get_checkout_order_received_url() : wc_get_checkout_url() );
-			exit;
 		}
 
-		// Any status other than blank or "pending" reports a non-success
-		// outcome, including values this version does not recognise. It is a
-		// hint, never terminal proof: a stale "cancelled" replayed from
-		// browser history must not fail an order whose debit is in flight.
-		$reported_failure = '' !== $status && 'pending' !== $status;
-		if ( $reported_failure ) {
-			/* translators: %s: gateway status parameter */
-			$order->add_order_note( sprintf( __( 'The customer returned from the BlinkPay gateway with status %s; confirming the outcome through the API.', 'blinkpay-nz-for-woocommerce' ), $status ) );
-		}
-
-		$outcome = $this->confirm_quick_payment( $order );
-
-		// Released before the redirect: exit does not unwind the stack, so
-		// anything after wp_safe_redirect() never runs.
-		$this->release_order_lock( $order_id, $lock );
-
-		if ( 'failed' === $outcome ) {
-			// Keyed off the API-confirmed outcome, not the replayable URL
-			// parameter: every confirmed failure path means no money moved,
-			// so the message stays accurate by construction.
-			wc_add_notice( __( 'Your payment was not completed and you have not been charged. Please try again.', 'blinkpay-nz-for-woocommerce' ), 'error' );
-			wp_safe_redirect( $order->get_checkout_payment_url() );
-			exit;
-		}
-
-		wp_safe_redirect( $order->get_checkout_order_received_url() );
+		wp_safe_redirect( $destination );
 		exit;
 	}
 
@@ -1146,9 +1152,11 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			return;
 		}
 
-		$this->run_status_check( $order_id );
-
-		$this->release_order_lock( $order_id, $lock );
+		try {
+			$this->run_status_check( $order_id );
+		} finally {
+			$this->release_order_lock( $order_id, $lock );
+		}
 	}
 
 	/**
@@ -1290,11 +1298,11 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			return new WP_Error( 'blinkpay_refund_failed', __( 'Another BlinkPay operation on this order is still in progress. Check the order notes and the BlinkPay merchant portal for the outcome of the previous request before retrying the refund.', 'blinkpay-nz-for-woocommerce' ) );
 		}
 
-		$result = $this->execute_refund( $order, $payment_id, $amount, $reason );
-
-		$this->release_order_lock( $order->get_id(), $lock );
-
-		return $result;
+		try {
+			return $this->execute_refund( $order, $payment_id, $amount, $reason );
+		} finally {
+			$this->release_order_lock( $order->get_id(), $lock );
+		}
 	}
 
 	/**
