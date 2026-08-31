@@ -6,6 +6,10 @@
  * owns the outcome: the return page shows the order as it stands, and the
  * cron check reschedules itself without advancing the attempt counter.
  *
+ * BDL-1630: acquisition is atomic — backed by WP_Upgrader::create_lock() —
+ * so exactly one of two concurrent callers acquires, and a double-submitted
+ * refund loses the race instead of refunding the customer twice.
+ *
  * @package blinkpay-nz-for-woocommerce
  */
 
@@ -28,6 +32,49 @@ class WC_BlinkPay_Lock_Race_Gateway extends WC_BlinkPay_Test_Gateway {
 		$GLOBALS['wc_blinkpay_test_orders'][ $order_id ] = $paid;
 
 		return $acquired;
+	}
+}
+
+/**
+ * Exposes the protected lock methods so tests can drive the acquisition
+ * contract directly, one instance per simulated process.
+ */
+class WC_BlinkPay_Lock_Probe_Gateway extends WC_BlinkPay_Test_Gateway {
+
+	public function acquire( $order_id ) {
+		return $this->acquire_order_lock( $order_id );
+	}
+
+	public function release( $order_id ) {
+		$this->release_order_lock( $order_id );
+	}
+}
+
+/**
+ * A client whose refund creation fires a rival gateway's refund for the same
+ * order mid-flight, reproducing the double submission the lock must resolve
+ * to exactly one winner: two shop managers clicking Refund at once, or one
+ * admin retrying while the first request is still slow.
+ */
+class WC_BlinkPay_Double_Submission_Client extends WC_BlinkPay_Fake_API_Client {
+
+	/** @var WC_BlinkPay_Test_Gateway|null Fired once, on the first refund creation. */
+	public $rival_gateway;
+
+	/** @var int */
+	public $rival_order_id;
+
+	/** @var bool|WP_Error|null What the rival's process_refund() returned. */
+	public $rival_result;
+
+	public function create_refund( array $payload ) {
+		if ( $this->rival_gateway ) {
+			$rival               = $this->rival_gateway;
+			$this->rival_gateway = null;
+			$this->rival_result  = $rival->process_refund( $this->rival_order_id, 49.95, '' );
+		}
+
+		return parent::create_refund( $payload );
 	}
 }
 
@@ -60,7 +107,17 @@ class ConcurrencyGuardTest extends TestCase {
 	 * @param int $order_id The order ID.
 	 */
 	private function hold_order_lock( $order_id ) {
-		set_transient( 'wc_blinkpay_order_lock_' . $order_id, time(), WC_BlinkPay_Gateway::ORDER_LOCK_TIMEOUT );
+		WP_Upgrader::create_lock( 'wc_blinkpay_order_' . $order_id, WC_BlinkPay_Gateway::ORDER_LOCK_TIMEOUT );
+	}
+
+	/**
+	 * Whether the order's lock is currently held.
+	 *
+	 * @param int $order_id The order ID.
+	 * @return bool
+	 */
+	private function order_lock_held( $order_id ) {
+		return false !== get_option( 'wc_blinkpay_order_' . $order_id . '.lock' );
 	}
 
 	/**
@@ -126,7 +183,7 @@ class ConcurrencyGuardTest extends TestCase {
 		$this->assertSame( array(), $order->notes );
 
 		// The lock belongs to the other process and must survive this request.
-		$this->assertNotFalse( get_transient( 'wc_blinkpay_order_lock_401' ) );
+		$this->assertTrue( $this->order_lock_held( 401 ) );
 	}
 
 	public function test_the_cron_check_defers_and_retries_shortly_while_another_process_holds_the_lock() {
@@ -177,7 +234,7 @@ class ConcurrencyGuardTest extends TestCase {
 		$this->assertSame( array(), $client->refund_calls, 'No refund may be created while another operation holds the order.' );
 
 		// The lock belongs to the other process and must survive this request.
-		$this->assertNotFalse( get_transient( 'wc_blinkpay_order_lock_406' ) );
+		$this->assertTrue( $this->order_lock_held( 406 ) );
 	}
 
 	public function test_a_refund_releases_the_lock_when_finished() {
@@ -203,7 +260,61 @@ class ConcurrencyGuardTest extends TestCase {
 
 		$this->assertTrue( $result );
 		$this->assertCount( 1, $client->refund_calls );
-		$this->assertFalse( get_transient( 'wc_blinkpay_order_lock_407' ), 'The lock must be released once the refund finishes.' );
+		$this->assertFalse( $this->order_lock_held( 407 ), 'The lock must be released once the refund finishes.' );
+	}
+
+	public function test_exactly_one_of_two_concurrent_acquirers_wins_the_order_lock() {
+		$first  = new WC_BlinkPay_Lock_Probe_Gateway( new WC_BlinkPay_Fake_API_Client() );
+		$second = new WC_BlinkPay_Lock_Probe_Gateway( new WC_BlinkPay_Fake_API_Client() );
+
+		$this->assertTrue( $first->acquire( 408 ) );
+		$this->assertFalse( $second->acquire( 408 ), 'The lock is held: the loser must be told, not silently overwrite the winner.' );
+
+		$first->release( 408 );
+
+		$this->assertTrue( $second->acquire( 408 ), 'A released lock must be acquirable again.' );
+	}
+
+	public function test_a_crashed_holders_expired_lock_is_broken_and_reacquired() {
+		$gateway = new WC_BlinkPay_Lock_Probe_Gateway( new WC_BlinkPay_Fake_API_Client() );
+
+		// A holder that crashed before releasing, longer ago than the timeout.
+		update_option( 'wc_blinkpay_order_409.lock', time() - WC_BlinkPay_Gateway::ORDER_LOCK_TIMEOUT - 1 );
+
+		$this->assertTrue( $gateway->acquire( 409 ), 'An expired lock means a crashed holder: it must be broken, not respected for good.' );
+	}
+
+	public function test_a_refund_double_submission_loses_the_race_and_creates_no_second_refund() {
+		$order = $this->register_order( 410 );
+		$order->update_meta_data( '_blinkpay_payment_id', 'pay-410' );
+		$order->update_meta_data( '_blinkpay_accepted_reason', 'card_network_accepted' );
+		$order->payment_complete( 'pay-410' );
+
+		$rival_client = new WC_BlinkPay_Fake_API_Client( array(), array(), array( array( 'refund_id' => 'rf-410-b' ) ) );
+		$rival        = new WC_BlinkPay_Test_Gateway( $rival_client );
+
+		$client                 = new WC_BlinkPay_Double_Submission_Client(
+			array(),
+			array(),
+			array( array( 'refund_id' => 'rf-410-a' ) ),
+			array(
+				array(
+					'refund_id' => 'rf-410-a',
+					'status'    => 'completed',
+				),
+			)
+		);
+		$client->rival_gateway  = $rival;
+		$client->rival_order_id = 410;
+
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		$result = $gateway->process_refund( 410, 49.95, '' );
+
+		$this->assertTrue( $result, 'The first submission wins the lock and refunds normally.' );
+		$this->assertCount( 1, $client->refund_calls );
+		$this->assertInstanceOf( WP_Error::class, $client->rival_result, 'The loser\'s acquisition must report failure to the admin who double-submitted.' );
+		$this->assertSame( array(), $rival_client->refund_calls, 'Exactly one money-moving refund may be created; the customer must not be refunded twice.' );
 	}
 
 	public function test_the_return_page_abandons_a_stale_failure_when_the_order_was_completed_concurrently() {
@@ -235,7 +346,7 @@ class ConcurrencyGuardTest extends TestCase {
 		$this->assertTrue( $GLOBALS['wc_blinkpay_test_orders'][403]->is_paid(), 'The concurrent completion must stand.' );
 
 		// The lock was this request's own and is released for the next caller.
-		$this->assertFalse( get_transient( 'wc_blinkpay_order_lock_403' ) );
+		$this->assertFalse( $this->order_lock_held( 403 ) );
 	}
 
 	public function test_the_return_page_confirms_normally_and_releases_the_lock_when_uncontended() {
@@ -250,7 +361,7 @@ class ConcurrencyGuardTest extends TestCase {
 
 		$this->assertSame( 'https://example.test/order-received/404/', $location );
 		$this->assertTrue( $order->is_paid() );
-		$this->assertFalse( get_transient( 'wc_blinkpay_order_lock_404' ), 'The lock must be released once confirmation finishes.' );
+		$this->assertFalse( $this->order_lock_held( 404 ), 'The lock must be released once confirmation finishes.' );
 	}
 
 	public function test_the_cron_check_confirms_normally_and_releases_the_lock_when_uncontended() {
@@ -265,6 +376,6 @@ class ConcurrencyGuardTest extends TestCase {
 
 		$this->assertTrue( $order->is_paid() );
 		$this->assertSame( 1, $order->get_meta( '_blinkpay_status_checks' ) );
-		$this->assertFalse( get_transient( 'wc_blinkpay_order_lock_405' ), 'The lock must be released once the check finishes.' );
+		$this->assertFalse( $this->order_lock_held( 405 ), 'The lock must be released once the check finishes.' );
 	}
 }

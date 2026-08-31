@@ -167,7 +167,7 @@ class CheckoutRetryTest extends TestCase {
 		$order = $this->register_order( 706 );
 		$order->update_meta_data( '_blinkpay_quick_payment_id', 'qp-706' );
 
-		set_transient( 'wc_blinkpay_order_lock_706', time(), WC_BlinkPay_Gateway::ORDER_LOCK_TIMEOUT );
+		WP_Upgrader::create_lock( 'wc_blinkpay_order_706', WC_BlinkPay_Gateway::ORDER_LOCK_TIMEOUT );
 
 		$client  = new WC_BlinkPay_Fake_API_Client();
 		$gateway = new WC_BlinkPay_Test_Gateway( $client );
@@ -179,7 +179,7 @@ class CheckoutRetryTest extends TestCase {
 		$this->assertSame( array(), $client->create_calls );
 
 		// The lock belongs to the other process and must survive this request.
-		$this->assertNotFalse( get_transient( 'wc_blinkpay_order_lock_706' ) );
+		$this->assertNotFalse( get_option( 'wc_blinkpay_order_706.lock' ) );
 	}
 
 	public function test_a_retry_redirects_to_the_received_page_when_the_order_is_already_paid() {
@@ -195,6 +195,6 @@ class CheckoutRetryTest extends TestCase {
 		$this->assertSame( 'success', $result['result'] );
 		$this->assertSame( 'https://example.test/order-received/707/', $result['redirect'] );
 		$this->assertSame( array(), $client->get_calls, 'A paid order needs no confirmation and no payment.' );
-		$this->assertFalse( get_transient( 'wc_blinkpay_order_lock_707' ), 'The lock must be released on the already-paid path.' );
+		$this->assertFalse( get_option( 'wc_blinkpay_order_707.lock' ), 'The lock must be released on the already-paid path.' );
 	}
 }

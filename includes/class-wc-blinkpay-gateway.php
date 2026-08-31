@@ -25,8 +25,8 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	// worst-case holder — the account-number refund path's create plus
 	// INLINE_POLL_ATTEMPTS retrievals at the API client's 30-second timeout,
 	// plus the pauses between them — so a slow but live operation is never
-	// barged in on, while a crashed holder's lock still expires within
-	// minutes.
+	// barged in on, while a crashed holder's lock is broken by the next
+	// acquirer within minutes.
 	const ORDER_LOCK_TIMEOUT = 300;
 
 	// How soon a deferred check that lost the lock retries. No check ran, so
@@ -416,35 +416,40 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	}
 
 	/**
-	 * Takes the per-order confirmation lock. WooCommerce has no order-level
+	 * Takes the per-order lock that serialises everything able to complete,
+	 * fail or refund an order concurrently. WooCommerce has no order-level
 	 * locking primitive — payment_complete() validates only against the order
-	 * object already in memory — so a transient mutex serialises the two paths
-	 * that can complete or fail an order concurrently: the return page's
-	 * inline poll and the deferred cron check. When the transient store is the
-	 * options table, set_transient() on an absent key is an insert against a
-	 * unique index, so a lost race reports false here rather than both callers
-	 * proceeding.
+	 * object already in memory — and transients cannot back one: on the
+	 * options-table backend set_transient() is a non-atomic existence check
+	 * before an insert-or-update, and under a persistent object cache it is an
+	 * unconditional overwrite, so two racers would both acquire.
+	 * WP_Upgrader::create_lock() is atomic on both — an INSERT IGNORE straight
+	 * into the options table, where the unique key on option_name makes the
+	 * loser's insert affect no rows — and it breaks a lock older than the
+	 * timeout, so a crashed holder cannot jam the order for good.
 	 *
 	 * @param int $order_id The order ID.
 	 * @return bool Whether the lock was acquired.
 	 */
 	protected function acquire_order_lock( $order_id ) {
-		$key = 'wc_blinkpay_order_lock_' . $order_id;
-
-		if ( get_transient( $key ) ) {
-			return false;
+		if ( ! class_exists( 'WP_Upgrader' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
 		}
 
-		return (bool) set_transient( $key, time(), self::ORDER_LOCK_TIMEOUT );
+		return WP_Upgrader::create_lock( 'wc_blinkpay_order_' . $order_id, self::ORDER_LOCK_TIMEOUT );
 	}
 
 	/**
-	 * Releases the per-order confirmation lock.
+	 * Releases the per-order lock.
 	 *
 	 * @param int $order_id The order ID.
 	 */
 	protected function release_order_lock( $order_id ) {
-		delete_transient( 'wc_blinkpay_order_lock_' . $order_id );
+		if ( ! class_exists( 'WP_Upgrader' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
+		}
+
+		WP_Upgrader::release_lock( 'wc_blinkpay_order_' . $order_id );
 	}
 
 	/**

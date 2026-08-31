@@ -169,6 +169,43 @@ function is_wp_error( $thing ) {
 	return $thing instanceof WP_Error;
 }
 
+/**
+ * The slice of WP_Upgrader the gateway uses: the option-backed lock. Mirrors
+ * core's semantics — the INSERT IGNORE is modelled as one indivisible
+ * insert-if-absent, a held lock older than the timeout is broken and
+ * re-acquired, and releasing deletes the option.
+ */
+class WP_Upgrader {
+
+	public static function create_lock( $lock_name, $release_timeout = null ) {
+		if ( ! $release_timeout ) {
+			$release_timeout = 3600;
+		}
+
+		$lock_option = $lock_name . '.lock';
+
+		if ( isset( $GLOBALS['wc_blinkpay_options'][ $lock_option ] ) ) {
+			$held_since = get_option( $lock_option );
+
+			if ( $held_since > ( time() - $release_timeout ) ) {
+				return false;
+			}
+
+			self::release_lock( $lock_name );
+
+			return self::create_lock( $lock_name, $release_timeout );
+		}
+
+		update_option( $lock_option, time(), false );
+
+		return true;
+	}
+
+	public static function release_lock( $lock_name ) {
+		return delete_option( $lock_name . '.lock' );
+	}
+}
+
 class WP_Error {
 
 	/** @var string */
