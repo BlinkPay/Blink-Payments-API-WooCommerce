@@ -24,13 +24,33 @@ jobs:
       - name: Lint PHP files
         run: find . -name '*.php' -not -path './.git/*' -print0 | xargs -0 -n1 php -l
 
+  test:
+    needs: lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Oldest and newest supported PHP; lint covers the versions between.
+        php-version: [ '7.4', '8.4' ]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Use PHP ${{ matrix.php-version }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          coverage: none
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress
+      - name: Run unit tests
+        run: vendor/bin/phpunit
+
   snyk:
     needs: lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      # The plugin has no Composer dependencies, so Snyk Open Source has no
-      # manifest to scan; Snyk Code (static analysis) is what applies here.
+      # The plugin's Composer dependencies are dev-only, so Snyk Open Source
+      # has nothing shipped to scan; Snyk Code (static analysis) is what
+      # applies here.
       - name: Run Snyk Code to check for vulnerabilities
         uses: snyk/actions/php@master
         with:
@@ -63,7 +83,7 @@ jobs:
         continue-on-error: true
 
   package:
-    needs: lint
+    needs: [ lint, test ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -72,7 +92,7 @@ jobs:
       - name: Build plugin zip
         run: |
           mkdir -p build/blinkpay-nz-for-woocommerce
-          rsync -a --exclude='.git' --exclude='.claude' --exclude='.github' --exclude='.gitignore' --exclude='.wp-env.json' --exclude='build' ./ build/blinkpay-nz-for-woocommerce/
+          rsync -a --exclude='.git' --exclude='.claude' --exclude='.github' --exclude='.gitignore' --exclude='.wp-env.json' --exclude='build' --exclude='composer.json' --exclude='composer.lock' --exclude='phpunit.xml.dist' --exclude='tests' --exclude='vendor' ./ build/blinkpay-nz-for-woocommerce/
           cd build && zip -r blinkpay-nz-for-woocommerce.zip blinkpay-nz-for-woocommerce
       - name: Upload artifact
         uses: actions/upload-artifact@v5

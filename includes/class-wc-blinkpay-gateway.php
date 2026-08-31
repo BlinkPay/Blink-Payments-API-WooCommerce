@@ -226,6 +226,10 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		$order->add_order_note( sprintf( __( 'BlinkPay quick payment %s created; customer redirected to the Blink gateway.', 'blinkpay-nz-for-woocommerce' ), $response['quick_payment_id'] ) );
 		$order->save();
 
+		// The debit is only initiated by retrieving the quick payment, so the
+		// deferred check must not depend on the customer's browser returning.
+		$this->schedule_status_check( $order );
+
 		return array(
 			'result'   => 'success',
 			'redirect' => $response['redirect_uri'],
