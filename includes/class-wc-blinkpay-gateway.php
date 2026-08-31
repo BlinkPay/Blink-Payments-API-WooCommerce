@@ -445,7 +445,10 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	/**
 	 * Applies a payment's state to the order. Only AcceptedSettlementCompleted
 	 * counts as paid; AcceptedSettlementInProcess and Pending stay pending and
-	 * are resolved by the deferred status checks.
+	 * are resolved by the deferred status checks. A completed payment is only
+	 * applied after the paid amount is verified against the order total, and
+	 * what the customer was actually charged — including any surcharge Blink
+	 * added on the hosted gateway — is recorded against the order.
 	 *
 	 * @param WC_Order $order   The order.
 	 * @param array    $payment The payment model from the API.
@@ -461,11 +464,19 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		}
 
 		if ( 'AcceptedSettlementCompleted' === $status ) {
+			$amount = isset( $payment['detail']['amount'] ) && is_array( $payment['detail']['amount'] ) ? $payment['detail']['amount'] : array();
+
+			if ( $this->is_underpaid( $order, $amount ) ) {
+				$this->flag_underpayment( $order, $payment_id, $amount['total'] );
+				return 'pending';
+			}
+
 			if ( ! empty( $payment['accepted_reason'] ) ) {
 				// Card and bank payments refund differently, so how the
 				// payment settled is needed again at refund time.
 				$order->update_meta_data( '_blinkpay_accepted_reason', $payment['accepted_reason'] );
 			}
+			$this->record_charged_amount( $order, $amount );
 			$order->payment_complete( $payment_id );
 			/* translators: %s: payment ID */
 			$order->add_order_note( sprintf( __( 'BlinkPay payment %s completed.', 'blinkpay-nz-for-woocommerce' ), $payment_id ) );
@@ -479,6 +490,95 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		}
 
 		return 'pending';
+	}
+
+	/**
+	 * Whether the payment's reported amount is less than the order total. The
+	 * request body is filterable by third-party code, so the gateway verifies
+	 * what it was actually paid rather than trusting the status alone. The
+	 * comparison is on the pre-surcharge total — the price of the goods — and
+	 * in whole cents. An amount the API did not report cannot be verified and
+	 * does not block completion.
+	 *
+	 * @param WC_Order $order  The order.
+	 * @param array    $amount The payment's amount model.
+	 * @return bool
+	 */
+	private function is_underpaid( $order, array $amount ) {
+		if ( ! isset( $amount['total'] ) ) {
+			return false;
+		}
+
+		return (int) round( (float) $amount['total'] * 100 ) < (int) round( (float) $order->get_total() * 100 );
+	}
+
+	/**
+	 * Parks an underpaid order on hold for the merchant instead of silently
+	 * completing it. Noted once: the deferred status checks keep re-reading
+	 * the same payment, and the merchant needs one flag, not one per poll.
+	 *
+	 * @param WC_Order $order      The order.
+	 * @param string   $payment_id The payment ID.
+	 * @param string   $paid_total The paid amount reported by the API.
+	 */
+	private function flag_underpayment( $order, $payment_id, $paid_total ) {
+		if ( $order->get_meta( '_blinkpay_underpayment_flagged' ) ) {
+			return;
+		}
+
+		$order->update_meta_data( '_blinkpay_underpayment_flagged', 'yes' );
+		$order->save();
+
+		$note = sprintf(
+			/* translators: 1: payment ID, 2: paid amount, 3: order total */
+			__( 'BlinkPay reports payment %1$s completed for NZD %2$s, but the order total is NZD %3$s. The order has not been completed automatically; verify the payment in the BlinkPay merchant portal and update the order manually.', 'blinkpay-nz-for-woocommerce' ),
+			$payment_id,
+			$this->format_amount( $paid_total ),
+			$this->format_amount( $order->get_total() )
+		);
+
+		if ( $order->has_status( 'on-hold' ) ) {
+			$order->add_order_note( $note );
+		} else {
+			$order->update_status( 'on-hold', $note );
+		}
+	}
+
+	/**
+	 * Records what the customer was actually charged. total_charge is the
+	 * instructed amount sent to the bank — the order total plus any surcharge
+	 * Blink applied once the customer selected a payment method on the hosted
+	 * gateway — so the surcharge is kept as meta and noted for reconciliation.
+	 * The caller's payment_complete() saves the order.
+	 *
+	 * @param WC_Order $order  The order.
+	 * @param array    $amount The payment's amount model.
+	 */
+	private function record_charged_amount( $order, array $amount ) {
+		$charged = '';
+		if ( isset( $amount['total_charge'] ) ) {
+			$charged = $amount['total_charge'];
+		} elseif ( isset( $amount['total'] ) ) {
+			$charged = $amount['total'];
+		}
+
+		if ( '' === $charged ) {
+			return;
+		}
+
+		$order->update_meta_data( '_blinkpay_total_charge', $charged );
+
+		if ( isset( $amount['surcharge'] ) && (float) $amount['surcharge'] > 0 ) {
+			$order->update_meta_data( '_blinkpay_surcharge', $amount['surcharge'] );
+			$order->add_order_note(
+				sprintf(
+					/* translators: 1: total charged, 2: surcharge */
+					__( 'The customer was charged NZD %1$s in total, including a NZD %2$s BlinkPay surcharge on top of the order total.', 'blinkpay-nz-for-woocommerce' ),
+					$this->format_amount( $charged ),
+					$this->format_amount( $amount['surcharge'] )
+				)
+			);
+		}
 	}
 
 	/**

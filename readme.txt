@@ -34,6 +34,10 @@ How the customer paid decides how a refund works. A card payment is refunded thr
 
 WooCommerce's own **Refund manually** button is hidden on BlinkPay orders — it would record money as returned without BlinkPay involvement — so every refund goes through **Refund via BlinkPay**. That button is only offered when your BlinkPay credentials include the refund permissions (create:refund and view:refund); contact BlinkPay if you need them enabled.
 
+= Surcharges =
+
+If surcharging is enabled for your BlinkPay merchant account, BlinkPay adds the surcharge on top of the order total once the customer selects a payment method on the hosted gateway, and the customer sees and authorises the combined amount there. WooCommerce still records the order total as paid; the amount actually charged and the surcharge are recorded on the order as a note and as metadata for reconciliation. The plugin also verifies the paid amount against the order total before completing an order — an underpaid order is placed on hold for you to review rather than completed silently.
+
 = Requirements =
 
 * WordPress 6.0+ with WP-Cron enabled (used to confirm slow payments)

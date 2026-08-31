@@ -45,6 +45,8 @@ define( 'BLINKPAY_CLIENT_SECRET', 'your-client-secret' );
 
 The return redirect alone is never treated as proof of payment — the outcome is always confirmed through the API, as the gateway contract requires.
 
+Before completing, the paid amount is verified against the order total — the quick payment payload is filterable by third-party code, so the gateway checks what it was actually paid. A completed payment reporting less than the order total parks the order **On hold** with a note naming both amounts (flagged once, not per poll). What the customer was actually charged is recorded on the order: with surcharging enabled for the merchant account, Blink adds the surcharge on the hosted gateway (the customer sees and authorises the combined amount there), and the plugin stores `total_charge` and `surcharge` as metadata with a reconciliation note.
+
 ### Access tokens
 
 The plugin requests an OAuth2 `client_credentials` token, caches it in a transient scoped to the environment and client ID, and reuses it until five minutes before its one-hour expiry, at which point the next request fetches a fresh one. A `401` (for example after a credential rotation) busts the cache and retries once.
@@ -66,6 +68,9 @@ WooCommerce's own **Refund manually** button is hidden on BlinkPay orders — it
 | `_blinkpay_quick_payment_id` | Quick payment ID for the order |
 | `_blinkpay_payment_id` | BlinkPay payment ID (also set as the order's transaction ID) |
 | `_blinkpay_accepted_reason` | How the payment settled (`source_bank_payment_sent` or `card_network_accepted`); selects the refund path |
+| `_blinkpay_total_charge` | The amount actually charged to the customer (`total_charge`, order total plus any surcharge) |
+| `_blinkpay_surcharge` | The surcharge Blink applied on the hosted gateway, when there was one |
+| `_blinkpay_underpayment_flagged` | Set when a completed payment reported less than the order total, so the flag is noted once |
 | `_blinkpay_idempotency_*` | Idempotency keys, one per API operation per order |
 
 ## Extensibility
