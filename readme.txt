@@ -15,7 +15,7 @@ Accept New Zealand bank payments in WooCommerce through BlinkPay open banking, w
 BlinkPay NZ for WooCommerce lets your customers pay directly from their New Zealand bank account using [BlinkPay](https://www.blinkpay.co.nz) open banking.
 
 * **Blink PayNow** — one-off payments at checkout, via quick payments.
-* **Refunds** — card payments are refunded through the card network in full or in part; bank payments retrieve the customer's account number for a manual bank transfer.
+* **Refunds** — card payments are refunded through the card network in full or in part; bank payments make the customer's account number available in the BlinkPay merchant portal for a manual bank transfer.
 
 Customers are sent to BlinkPay's hosted gateway, choose their bank — or card, when card payments are enabled for your BlinkPay merchant account — and authorise the payment. Card is where BlinkPay surcharging applies; see the Surcharges section below. Both the classic and block-based checkout are supported, as is high-performance order storage (HPOS).
 
@@ -30,7 +30,7 @@ The return redirect alone is never treated as proof of payment — the outcome i
 
 = Refunds =
 
-How the customer paid decides how a refund works. A card payment is refunded through the card network: the plugin requests a full or partial refund and BlinkPay moves the money back — the order notes record the refund's status, and a refund still processing should be verified in the BlinkPay merchant portal. A bank payment is refunded with BlinkPay's account-number refund, which does not move money: it retrieves the bank account the customer paid from into a private order note so you can transfer the refund from your own bank, and adds a customer-visible note that the refund will arrive by bank transfer.
+How the customer paid decides how a refund works. A card payment is refunded through the card network: the plugin requests a full or partial refund and BlinkPay moves the money back — the order notes record the refund's status, and a refund still processing should be verified in the BlinkPay merchant portal. A bank payment is refunded with BlinkPay's account-number refund, which does not move money: it makes the bank account the customer paid from available in the BlinkPay merchant portal so you can transfer the refund from your own bank — the order note points you there, and the account number is never copied into WordPress — and adds a customer-visible note that the refund will arrive by bank transfer.
 
 WooCommerce's own **Refund manually** button is hidden on BlinkPay orders — it would record money as returned without BlinkPay involvement — so every refund goes through **Refund via BlinkPay**. That button is only offered when your BlinkPay credentials include the refund permissions (create:refund and view:refund); contact BlinkPay if you need them enabled.
 
@@ -86,7 +86,7 @@ Bank settlement is asynchronous, and a payment made in the evening may not settl
 
 = Does a WooCommerce refund send money back to the customer? =
 
-For card payments, yes: the plugin requests a full or partial refund and BlinkPay moves the money back through the card network. For bank payments, no: the refund retrieves the customer's bank account number into a private order note so you can make the transfer from your own bank — the order note says so explicitly, and the customer is told to expect a bank transfer.
+For card payments, yes: the plugin requests a full or partial refund and BlinkPay moves the money back through the card network. For bank payments, no: the refund makes the customer's bank account number available in the BlinkPay merchant portal so you can make the transfer from your own bank — the order note says so explicitly, and the customer is told to expect a bank transfer.
 
 = Which currencies are supported? =
 

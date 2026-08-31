@@ -212,10 +212,14 @@ class RefundTypeTest extends TestCase {
 			$client->refund_calls[0]
 		);
 
-		// The private note carries the obligation and the account number.
+		// The private note carries the obligation and where to find the
+		// account number; the number itself stays in the BlinkPay portal so
+		// no bank account PII lands in order notes, exports or backups.
 		$this->assertCount( 1, $order->notes );
 		$this->assertStringContainsString( 'does not move money', $order->notes[0] );
-		$this->assertStringContainsString( '01-2345-6789012-00', $order->notes[0] );
+		$this->assertStringContainsString( 'merchant portal', $order->notes[0] );
+		$this->assertStringContainsString( 'rf-403', $order->notes[0] );
+		$this->assertStringNotContainsString( '01-2345-6789012-00', $order->notes[0] );
 
 		// The obligation is also obvious beyond the private note: the customer
 		// is told to expect a bank transfer, without the account number.
@@ -342,7 +346,6 @@ class RefundTypeTest extends TestCase {
 		// one; the merchant is deferred to the portal instead.
 		$this->assertTrue( $result );
 		$this->assertCount( 1, $order->notes );
-		$this->assertStringContainsString( 'still processing', $order->notes[0] );
 		$this->assertStringContainsString( 'rf-408', $order->notes[0] );
 		$this->assertStringContainsString( 'merchant portal', $order->notes[0] );
 		$this->assertCount( 1, $order->customer_notes );
