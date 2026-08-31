@@ -78,6 +78,34 @@ class WC_BlinkPay_Double_Submission_Client extends WC_BlinkPay_Fake_API_Client {
 	}
 }
 
+/**
+ * A client whose quick payment creation fires a rival gateway's checkout for
+ * the same order mid-flight, reproducing the double submission the lock must
+ * resolve to exactly one winner: a double-click, a browser retry on a slow
+ * POST, or two order-pay tabs.
+ */
+class WC_BlinkPay_Double_Checkout_Client extends WC_BlinkPay_Fake_API_Client {
+
+	/** @var WC_BlinkPay_Test_Gateway|null Fired once, on the first creation. */
+	public $rival_gateway;
+
+	/** @var int */
+	public $rival_order_id;
+
+	/** @var array|null What the rival's process_payment() returned. */
+	public $rival_result;
+
+	public function create_quick_payment( $payload, $idempotency_key ) {
+		if ( $this->rival_gateway ) {
+			$rival               = $this->rival_gateway;
+			$this->rival_gateway = null;
+			$this->rival_result  = $rival->process_payment( $this->rival_order_id );
+		}
+
+		return parent::create_quick_payment( $payload, $idempotency_key );
+	}
+}
+
 class ConcurrencyGuardTest extends TestCase {
 
 	protected function setUp(): void {
@@ -261,6 +289,42 @@ class ConcurrencyGuardTest extends TestCase {
 		$this->assertTrue( $result );
 		$this->assertCount( 1, $client->refund_calls );
 		$this->assertFalse( $this->order_lock_held( 407 ), 'The lock must be released once the refund finishes.' );
+	}
+
+	public function test_a_checkout_double_submission_creates_exactly_one_quick_payment() {
+		$order = $this->register_order( 411 );
+
+		$rival_client = new WC_BlinkPay_Fake_API_Client(
+			array(
+				array(
+					'quick_payment_id' => 'qp-411-b',
+					'redirect_uri'     => 'https://gateway.test/pay/qp-411-b',
+				),
+			)
+		);
+		$rival        = new WC_BlinkPay_Test_Gateway( $rival_client );
+
+		$client                 = new WC_BlinkPay_Double_Checkout_Client(
+			array(
+				array(
+					'quick_payment_id' => 'qp-411-a',
+					'redirect_uri'     => 'https://gateway.test/pay/qp-411-a',
+				),
+			)
+		);
+		$client->rival_gateway  = $rival;
+		$client->rival_order_id = 411;
+
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		$result = $gateway->process_payment( 411 );
+
+		$this->assertSame( 'success', $result['result'], 'The first submission wins the lock and checks out normally.' );
+		$this->assertCount( 1, $client->create_calls );
+		$this->assertSame( 'failure', $client->rival_result['result'], 'The loser must be refused, not mint a second quick payment.' );
+		$this->assertSame( array(), $rival_client->create_calls, 'Exactly one quick payment may be created for one order.' );
+		$this->assertSame( 'qp-411-a', $order->get_meta( '_blinkpay_quick_payment_id' ), 'The winner\'s quick payment must not be overwritten.' );
+		$this->assertFalse( $this->order_lock_held( 411 ), 'The lock must be released once the checkout finishes.' );
 	}
 
 	public function test_exactly_one_of_two_concurrent_acquirers_wins_the_order_lock() {

@@ -253,7 +253,12 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 
 	/**
 	 * Starts the payment journey: creates a quick payment and returns the
-	 * hosted gateway URL.
+	 * hosted gateway URL. The whole decide-and-create sequence runs under the
+	 * per-order lock: two concurrent submissions — a double-click, a browser
+	 * retry on a slow POST, two order-pay tabs — would otherwise both read
+	 * the order before either persists an idempotency key, mint two keys and
+	 * create two quick payments, one of them orphaned with nothing tracking
+	 * its debit.
 	 *
 	 * @param int $order_id The order ID.
 	 * @return array
@@ -264,36 +269,6 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		if ( ! $order || 'NZD' !== $order->get_currency() ) {
 			wc_add_notice( __( 'BlinkPay can only process payments in New Zealand dollars.', 'blinkpay-nz-for-woocommerce' ), 'error' );
 			return array( 'result' => 'failure' );
-		}
-
-		$resumption = $this->resume_existing_quick_payment( $order );
-		if ( null !== $resumption ) {
-			return $resumption;
-		}
-
-		return $this->start_quick_payment( $order );
-	}
-
-	/**
-	 * Resolves a retried checkout against the order's existing quick payment
-	 * before any new one may be created. The order-pay link stays live while
-	 * the order is pending, so a customer who authorised at their bank but
-	 * never returned to the site can pay the same order again; a stored quick
-	 * payment ID means a debit may already be in flight, and it is only safe
-	 * to create a fresh payment once the previous attempt is confirmed
-	 * terminal with no money moved. Confirmation runs under the per-order
-	 * lock, like every other path that can complete or fail the order.
-	 *
-	 * @param WC_Order $order The order.
-	 * @return array|null A process_payment() result, or null when no quick
-	 *                    payment exists or the previous one ended with no
-	 *                    money moved, so a fresh payment may be created.
-	 */
-	private function resume_existing_quick_payment( $order ) {
-		$order_id = $order->get_id();
-
-		if ( ! $order->get_meta( '_blinkpay_quick_payment_id' ) ) {
-			return null;
 		}
 
 		if ( ! $this->acquire_order_lock( $order_id ) ) {
@@ -313,9 +288,37 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			);
 		}
 
-		$outcome = $this->confirm_quick_payment( $order );
+		$result = $this->resume_existing_quick_payment( $order );
+		if ( null === $result ) {
+			$result = $this->start_quick_payment( $order );
+		}
 
 		$this->release_order_lock( $order_id );
+
+		return $result;
+	}
+
+	/**
+	 * Resolves a retried checkout against the order's existing quick payment
+	 * before any new one may be created. The order-pay link stays live while
+	 * the order is pending, so a customer who authorised at their bank but
+	 * never returned to the site can pay the same order again; a stored quick
+	 * payment ID means a debit may already be in flight, and it is only safe
+	 * to create a fresh payment once the previous attempt is confirmed
+	 * terminal with no money moved. The caller holds the per-order lock and
+	 * has read the order under it.
+	 *
+	 * @param WC_Order $order The order, read under the lock.
+	 * @return array|null A process_payment() result, or null when no quick
+	 *                    payment exists or the previous one ended with no
+	 *                    money moved, so a fresh payment may be created.
+	 */
+	private function resume_existing_quick_payment( $order ) {
+		if ( ! $order->get_meta( '_blinkpay_quick_payment_id' ) ) {
+			return null;
+		}
+
+		$outcome = $this->confirm_quick_payment( $order );
 
 		if ( 'paid' === $outcome ) {
 			return array(
