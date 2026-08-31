@@ -254,6 +254,105 @@ class CheckoutRetryTest extends TestCase {
 		$this->assertSame( 'on-hold', $order->get_status(), 'The unresolved attempt is parked for the deferred checks to settle.' );
 	}
 
+	public function test_a_retry_against_a_revoked_consent_with_a_settling_debit_creates_no_second_payment() {
+		$order = $this->register_order( 711 );
+		$order->update_meta_data( '_blinkpay_quick_payment_id', 'qp-711' );
+
+		// Anomalous but money-critical: the consent reads terminal while its
+		// payment is still settling. 'failed' means "no money moved" to the
+		// retry path, so this must stay pending.
+		$client  = new WC_BlinkPay_Fake_API_Client(
+			array(
+				array(
+					'quick_payment_id' => 'qp-second',
+					'redirect_uri'     => 'https://gateway.test/pay/qp-second',
+				),
+			),
+			array(
+				$this->consent(
+					'Revoked',
+					array(
+						'payment_id' => 'pay-711',
+						'status'     => 'AcceptedSettlementInProcess',
+					)
+				),
+			)
+		);
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		$result = $gateway->process_payment( 711 );
+
+		$this->assertSame( 'failure', $result['result'] );
+		$this->assertSame( array(), $client->create_calls, 'A debit may still be settling: a second quick payment must not be created.' );
+		$this->assertSame( 'qp-711', $order->get_meta( '_blinkpay_quick_payment_id' ), 'The stored ID must keep pointing at the debit that may still settle.' );
+		$this->assertCount( 1, $GLOBALS['wc_blinkpay_scheduled_events'], 'The deferred checks must keep polling the in-flight debit.' );
+	}
+
+	public function test_a_retry_prefers_a_settling_sibling_payment_over_a_rejected_one() {
+		$order = $this->register_order( 712 );
+		$order->update_meta_data( '_blinkpay_quick_payment_id', 'qp-712' );
+
+		$client  = new WC_BlinkPay_Fake_API_Client(
+			array(),
+			array(
+				array(
+					'consent' => array(
+						'status'   => 'Revoked',
+						'payments' => array(
+							array(
+								'payment_id' => 'pay-712-rejected',
+								'status'     => 'Rejected',
+							),
+							array(
+								'payment_id' => 'pay-712-settling',
+								'status'     => 'AcceptedSettlementInProcess',
+							),
+						),
+					),
+				),
+			)
+		);
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		$result = $gateway->process_payment( 712 );
+
+		$this->assertSame( 'failure', $result['result'] );
+		$this->assertSame( array(), $client->create_calls, 'A rejected sibling must not outrank money possibly in motion.' );
+		$this->assertSame( 'qp-712', $order->get_meta( '_blinkpay_quick_payment_id' ) );
+	}
+
+	public function test_a_retry_after_a_rejected_consent_with_a_rejected_payment_creates_a_fresh_payment() {
+		$order = $this->register_order( 713 );
+		$order->update_meta_data( '_blinkpay_quick_payment_id', 'qp-713' );
+
+		// Every payment record is rejected: no money moved is confirmed, so
+		// the fresh creation stays possible.
+		$client  = new WC_BlinkPay_Fake_API_Client(
+			array(
+				array(
+					'quick_payment_id' => 'qp-fresh',
+					'redirect_uri'     => 'https://gateway.test/pay/qp-fresh',
+				),
+			),
+			array(
+				$this->consent(
+					'Rejected',
+					array(
+						'payment_id' => 'pay-713',
+						'status'     => 'Rejected',
+					)
+				),
+			)
+		);
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		$result = $gateway->process_payment( 713 );
+
+		$this->assertSame( 'success', $result['result'] );
+		$this->assertCount( 1, $client->create_calls );
+		$this->assertSame( 'qp-fresh', $order->get_meta( '_blinkpay_quick_payment_id' ) );
+	}
+
 	public function test_a_retry_whose_fresh_creation_fails_leaves_no_stale_attempt_behind() {
 		$order = $this->register_order( 710 );
 		$order->update_meta_data( '_blinkpay_quick_payment_id', 'qp-dead' );

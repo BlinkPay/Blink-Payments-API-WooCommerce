@@ -738,12 +738,20 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			}
 		}
 
-		// Checked even when a payment record exists: a terminal consent with a
-		// non-terminal payment should not poll for the full 36 hours. The spec
-		// promises this combination does not occur, so it only fires on an
-		// anomalous response — and a wrongly failed order self-heals, because
-		// failed orders keep polling and a settled debit recovers them.
+		// A terminal consent status fails the order — but only when its
+		// payment records confirm no money moved. Every caller treats
+		// 'failed' as exactly that: the retry path creates a fresh quick
+		// payment over it, replacing the stored ID so nothing would ever
+		// poll the old debit again. A terminal consent over a payment that
+		// is neither settled nor rejected is anomalous (the spec promises
+		// the combination does not occur), and money possibly in motion must
+		// keep the order pending for the deferred checks to resolve, even at
+		// the cost of polling out the full 36-hour schedule.
 		if ( in_array( $status, array( 'Rejected', 'Revoked', 'GatewayTimeout' ), true ) ) {
+			if ( ! $this->consent_moved_no_money( $consent ) ) {
+				return 'pending';
+			}
+
 			/* translators: %s: consent status */
 			$this->fail_order( $order, sprintf( __( 'The BlinkPay consent ended with status %s.', 'blinkpay-nz-for-woocommerce' ), $status ) );
 			return 'failed';
@@ -753,10 +761,35 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	}
 
 	/**
+	 * Whether the consent's payment records confirm that no money moved:
+	 * there are no records at all — a terminal consent that was never
+	 * debited — or every record is Rejected. A payment in any other status
+	 * may still settle, or already has, so failure may not be declared over
+	 * it.
+	 *
+	 * @param array $consent The consent model from the API.
+	 * @return bool
+	 */
+	private function consent_moved_no_money( array $consent ) {
+		$payments = isset( $consent['payments'] ) && is_array( $consent['payments'] ) ? $consent['payments'] : array();
+
+		foreach ( $payments as $payment ) {
+			if ( ! is_array( $payment ) || ! isset( $payment['status'] ) || 'Rejected' !== $payment['status'] ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
 	 * Picks which of a consent's payments to apply to the order. A one-off
 	 * quick payment carries at most one, but the array shape allows more, so
 	 * defensively prefer the first settled payment — money moved outranks
-	 * everything — then the first rejected one, then the first of any.
+	 * everything — then the first in-flight or unrecognised one, and a
+	 * rejected payment only when nothing else exists: applying a rejection
+	 * while a sibling payment is live would declare "no money moved" over a
+	 * debit that may still settle.
 	 *
 	 * @param array $payments The consent's payment models.
 	 * @return array|null The payment to apply, or null when there are none.
@@ -767,11 +800,15 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			return null;
 		}
 
-		foreach ( array( 'AcceptedSettlementCompleted', 'Rejected' ) as $preferred ) {
-			foreach ( $payments as $payment ) {
-				if ( isset( $payment['status'] ) && $preferred === $payment['status'] ) {
-					return $payment;
-				}
+		foreach ( $payments as $payment ) {
+			if ( isset( $payment['status'] ) && 'AcceptedSettlementCompleted' === $payment['status'] ) {
+				return $payment;
+			}
+		}
+
+		foreach ( $payments as $payment ) {
+			if ( ! isset( $payment['status'] ) || 'Rejected' !== $payment['status'] ) {
+				return $payment;
 			}
 		}
 
