@@ -19,6 +19,7 @@ $GLOBALS['wc_blinkpay_notices']          = array();
 $GLOBALS['wc_blinkpay_options']          = array();
 $GLOBALS['wc_blinkpay_transients']       = array();
 $GLOBALS['wc_blinkpay_http_responses']   = array();
+$GLOBALS['wc_blinkpay_http_requests']    = array();
 
 /**
  * Resets the recorded state between tests.
@@ -30,6 +31,7 @@ function wc_blinkpay_tests_reset() {
 	$GLOBALS['wc_blinkpay_options']          = array();
 	$GLOBALS['wc_blinkpay_transients']       = array();
 	$GLOBALS['wc_blinkpay_http_responses']   = array();
+	$GLOBALS['wc_blinkpay_http_requests']    = array();
 }
 
 // --- WordPress function stubs -----------------------------------------------
@@ -91,6 +93,10 @@ function wp_json_encode( $data ) {
 }
 
 function wp_remote_post( $url, $args = array() ) {
+	$GLOBALS['wc_blinkpay_http_requests'][] = array(
+		'url'  => $url,
+		'args' => $args,
+	);
 	return array_shift( $GLOBALS['wc_blinkpay_http_responses'] );
 }
 

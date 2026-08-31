@@ -54,7 +54,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		$this->icon               = apply_filters( 'wc_blinkpay_icon', WC_BLINKPAY_PLUGIN_URL . 'assets/images/blinkpay-logo.png' );
 		$this->has_fields         = false;
 		$this->method_title       = __( 'BlinkPay', 'blinkpay-nz-for-woocommerce' );
-		$this->method_description = __( 'Accept New Zealand bank payments through BlinkPay open banking. Orders are paid with Blink PayNow quick payments.', 'blinkpay-nz-for-woocommerce' );
+		$this->method_description = __( 'Accept New Zealand bank payments through BlinkPay open banking. Orders are paid with Blink PayNow quick payments. If card payments are enabled for your BlinkPay merchant account, the hosted gateway also offers card, and any BlinkPay surcharge is shown to and authorised by the customer there.', 'blinkpay-nz-for-woocommerce' );
 		$this->supports           = array( 'products', 'refunds' );
 
 		$this->init_form_fields();
@@ -118,7 +118,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 				'title'       => __( 'Description', 'blinkpay-nz-for-woocommerce' ),
 				'type'        => 'textarea',
 				'description' => __( 'The payment method description the customer sees at checkout.', 'blinkpay-nz-for-woocommerce' ),
-				'default'     => __( 'Pay securely from your New Zealand bank account.', 'blinkpay-nz-for-woocommerce' ),
+				'default'     => __( 'Pay securely from your New Zealand bank account, or by card where available.', 'blinkpay-nz-for-woocommerce' ),
 				'desc_tip'    => true,
 			),
 			'sandbox'         => array(
@@ -499,11 +499,12 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	 * @return string One of 'paid', 'failed' or 'pending'.
 	 */
 	public function evaluate_consent( $order, array $consent ) {
+		$status = isset( $consent['status'] ) ? $consent['status'] : '';
+
 		if ( ! empty( $consent['payments'][0] ) ) {
-			return $this->apply_payment_result( $order, $consent['payments'][0] );
+			return $this->apply_payment_result( $order, $consent['payments'][0], $status );
 		}
 
-		$status = isset( $consent['status'] ) ? $consent['status'] : '';
 		if ( in_array( $status, array( 'Rejected', 'Revoked', 'GatewayTimeout' ), true ) ) {
 			/* translators: %s: consent status */
 			$this->fail_order( $order, sprintf( __( 'The BlinkPay consent ended with status %s.', 'blinkpay-nz-for-woocommerce' ), $status ) );
@@ -521,11 +522,13 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	 * what the customer was actually charged — including any surcharge Blink
 	 * added on the hosted gateway — is recorded against the order.
 	 *
-	 * @param WC_Order $order   The order.
-	 * @param array    $payment The payment model from the API.
+	 * @param WC_Order $order          The order.
+	 * @param array    $payment        The payment model from the API.
+	 * @param string   $consent_status The parent consent's status, used to
+	 *                                 attribute a rejected payment correctly.
 	 * @return string One of 'paid', 'failed' or 'pending'.
 	 */
-	public function apply_payment_result( $order, array $payment ) {
+	public function apply_payment_result( $order, array $payment, $consent_status = '' ) {
 		$status     = isset( $payment['status'] ) ? $payment['status'] : '';
 		$payment_id = isset( $payment['payment_id'] ) ? $payment['payment_id'] : '';
 
@@ -555,8 +558,17 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		}
 
 		if ( 'Rejected' === $status ) {
-			/* translators: %s: payment ID */
-			$this->fail_order( $order, sprintf( __( 'BlinkPay payment %s was rejected by the bank.', 'blinkpay-nz-for-woocommerce' ), $payment_id ) );
+			// A quick payment also carries a Rejected payment record when the
+			// consent itself was declined, so the consent status decides which
+			// party the note blames — a decline sent to bank support helps
+			// no one.
+			if ( 'Rejected' === $consent_status ) {
+				/* translators: %s: payment ID */
+				$this->fail_order( $order, sprintf( __( 'The BlinkPay consent was declined before the payment was authorised — typically the customer cancelling at the gateway or their bank — so payment %s was never made and no money moved.', 'blinkpay-nz-for-woocommerce' ), $payment_id ) );
+			} else {
+				/* translators: %s: payment ID */
+				$this->fail_order( $order, sprintf( __( 'BlinkPay payment %s was rejected by the bank.', 'blinkpay-nz-for-woocommerce' ), $payment_id ) );
+			}
 			return 'failed';
 		}
 

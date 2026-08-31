@@ -8,7 +8,7 @@ Stable tag: 1.0.4
 License: MIT
 License URI: https://opensource.org/licenses/MIT
 
-Accept New Zealand bank payments in WooCommerce through BlinkPay open banking. No card details, no card fees.
+Accept New Zealand bank payments in WooCommerce through BlinkPay open banking, with card payments where enabled for your merchant account.
 
 == Description ==
 
@@ -17,7 +17,7 @@ BlinkPay NZ for WooCommerce lets your customers pay directly from their New Zeal
 * **Blink PayNow** — one-off payments at checkout, via quick payments.
 * **Refunds** — card payments are refunded through the card network in full or in part; bank payments retrieve the customer's account number for a manual bank transfer.
 
-Customers are sent to BlinkPay's hosted gateway, choose their bank, and authorise the payment in their own online banking. Both the classic and block-based checkout are supported, as is high-performance order storage (HPOS).
+Customers are sent to BlinkPay's hosted gateway, choose their bank — or card, when card payments are enabled for your BlinkPay merchant account — and authorise the payment. Card is where BlinkPay surcharging applies; see the Surcharges section below. Both the classic and block-based checkout are supported, as is high-performance order storage (HPOS).
 
 = How payments work =
 

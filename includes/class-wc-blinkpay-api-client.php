@@ -122,19 +122,24 @@ class WC_BlinkPay_API_Client {
 			}
 		}
 
+		// The documented token contract is OAuth 2.0 form encoding. The server
+		// happens to accept a JSON body too, but that is undocumented
+		// behaviour a hardening change could withdraw without notice.
 		$response = wp_remote_post(
 			$this->base_url() . '/oauth2/token',
 			array(
 				'headers' => array(
-					'Content-Type' => 'application/json',
+					'Content-Type' => 'application/x-www-form-urlencoded',
 					'Accept'       => 'application/json',
 				),
-				'body'    => wp_json_encode(
+				'body'    => http_build_query(
 					array(
 						'grant_type'    => 'client_credentials',
 						'client_id'     => $this->client_id,
 						'client_secret' => $this->client_secret,
-					)
+					),
+					'',
+					'&'
 				),
 				'timeout' => self::REQUEST_TIMEOUT,
 			)
