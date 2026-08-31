@@ -57,7 +57,7 @@ A card payment (`card_network_accepted`) is refunded with a money-moving type �
 
 A bank payment (`source_bank_payment_sent`, or an order from before the reason was recorded) uses the `account_number` refund type, which **does not move money**. It retrieves the bank account number the customer paid from into a private order note — carrying the BlinkPay refund reference — so you can transfer the refund from your own bank, and adds a customer-visible note that the refund will arrive by bank transfer, so the outstanding obligation is not buried in a private note.
 
-WooCommerce's own **Refund manually** button is hidden on BlinkPay orders — it would record money as returned without BlinkPay involvement — so every refund goes through **Refund via BlinkPay**.
+WooCommerce's own **Refund manually** button is hidden on BlinkPay orders — it would record money as returned without BlinkPay involvement — so every refund goes through **Refund via BlinkPay**. Refund support is advertised from the scopes in the last token grant (`create:refund` and `view:refund`, retained in a hashed `wc_blinkpay_scopes_*` option), so merchants whose credentials lack them never see a Refund button they cannot use; while the grant is unknown the button is offered, and a 403 names the missing permissions.
 
 ## Order metadata reference
 

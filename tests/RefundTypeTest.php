@@ -259,18 +259,51 @@ class RefundTypeTest extends TestCase {
 		$this->assertStringContainsString( 'https://bank.test/authorise/rf-407', $order->notes[1] );
 	}
 
-	public function test_the_account_number_refund_surfaces_an_error_when_the_account_number_is_missing() {
+	public function test_a_still_processing_account_number_refund_defers_instead_of_inviting_a_retry() {
 		$order  = $this->register_paid_order( 408, 'source_bank_payment_sent' );
 		$client = new WC_BlinkPay_Fake_API_Client(
 			array(),
 			array(),
 			array( array( 'refund_id' => 'rf-408' ) ),
-			array( new WP_Error( 'blinkpay_api_error', 'BlinkPay request failed with HTTP 500.' ) )
+			array(
+				array(
+					'refund_id' => 'rf-408',
+					'status'    => 'processing',
+				),
+			)
 		);
 
 		$gateway = new WC_BlinkPay_Test_Gateway( $client );
 
 		$result = $gateway->process_refund( 408, 49.95, '' );
+
+		// The refund exists, so an error here would invite creating a second
+		// one; the merchant is deferred to the portal instead.
+		$this->assertTrue( $result );
+		$this->assertCount( 1, $order->notes );
+		$this->assertStringContainsString( 'still processing', $order->notes[0] );
+		$this->assertStringContainsString( 'rf-408', $order->notes[0] );
+		$this->assertStringContainsString( 'merchant portal', $order->notes[0] );
+		$this->assertCount( 1, $order->customer_notes );
+	}
+
+	public function test_an_account_number_refund_reported_failed_rejects_the_woocommerce_refund() {
+		$order  = $this->register_paid_order( 409, 'source_bank_payment_sent' );
+		$client = new WC_BlinkPay_Fake_API_Client(
+			array(),
+			array(),
+			array( array( 'refund_id' => 'rf-409' ) ),
+			array(
+				array(
+					'refund_id' => 'rf-409',
+					'status'    => 'failed',
+				),
+			)
+		);
+
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		$result = $gateway->process_refund( 409, 49.95, '' );
 
 		$this->assertInstanceOf( WP_Error::class, $result );
 		$this->assertSame( array(), $order->notes );

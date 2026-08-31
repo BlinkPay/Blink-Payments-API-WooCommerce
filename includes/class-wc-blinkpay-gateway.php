@@ -194,6 +194,28 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	}
 
 	/**
+	 * Whether the gateway supports a feature. Refunds require the
+	 * create:refund and view:refund scopes, so they are only advertised when
+	 * the credentials' last token grant included both — otherwise WooCommerce
+	 * would offer a Refund button the merchant cannot use. An unknown grant
+	 * (no token fetched yet, or no scope in the response) keeps refunds
+	 * advertised, and the first attempt reports the missing permission.
+	 *
+	 * @param string $feature The feature name.
+	 * @return bool
+	 */
+	public function supports( $feature ) {
+		if ( 'refunds' === $feature ) {
+			$scopes = $this->get_api_client()->get_granted_scopes();
+
+			return null === $scopes
+				|| ( in_array( 'create:refund', $scopes, true ) && in_array( 'view:refund', $scopes, true ) );
+		}
+
+		return parent::supports( $feature );
+	}
+
+	/**
 	 * BlinkPay processes NZD bank payments only.
 	 *
 	 * @return bool
@@ -615,11 +637,32 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		$response = $client->create_refund( $payload );
 
 		if ( is_wp_error( $response ) || empty( $response['refund_id'] ) ) {
-			$detail = is_wp_error( $response ) ? $response->get_error_message() : __( 'No refund ID was returned.', 'blinkpay-nz-for-woocommerce' );
-			return new WP_Error( 'blinkpay_refund_failed', $detail );
+			return $this->refund_creation_error( $response );
 		}
 
 		return $this->finalise_money_transfer_refund( $order, $client, $amount, $reason, $response['refund_id'] );
+	}
+
+	/**
+	 * Builds the WP_Error for a refund creation that returned no refund ID.
+	 * A 403 names the missing permissions instead of surfacing the raw API
+	 * message, and an empty 2xx response warns the merchant to check the
+	 * portal before retrying, in case the refund was created.
+	 *
+	 * @param array|WP_Error $response The create_refund() response.
+	 * @return WP_Error
+	 */
+	private function refund_creation_error( $response ) {
+		if ( ! is_wp_error( $response ) ) {
+			return new WP_Error( 'blinkpay_refund_failed', __( 'BlinkPay did not return a refund ID. Check the BlinkPay merchant portal for the refund before retrying.', 'blinkpay-nz-for-woocommerce' ) );
+		}
+
+		$data = $response->get_error_data();
+		if ( is_array( $data ) && isset( $data['status'] ) && 403 === (int) $data['status'] ) {
+			return new WP_Error( 'blinkpay_refund_failed', __( 'BlinkPay declined the refund because this client is missing the refund permissions (create:refund and view:refund). Contact BlinkPay to enable refunds for your merchant account.', 'blinkpay-nz-for-woocommerce' ) );
+		}
+
+		return new WP_Error( 'blinkpay_refund_failed', $response->get_error_message() );
 	}
 
 	/**
@@ -689,25 +732,59 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			)
 		);
 		if ( is_wp_error( $response ) || empty( $response['refund_id'] ) ) {
-			$detail = is_wp_error( $response ) ? $response->get_error_message() : __( 'No refund ID was returned.', 'blinkpay-nz-for-woocommerce' );
-			return new WP_Error( 'blinkpay_refund_failed', $detail );
+			return $this->refund_creation_error( $response );
 		}
 
-		$refund = $client->get_refund( $response['refund_id'] );
-		if ( is_wp_error( $refund ) || empty( $refund['account_number'] ) ) {
-			return new WP_Error( 'blinkpay_refund_failed', __( 'BlinkPay did not return the customer\'s account number. Try the refund again.', 'blinkpay-nz-for-woocommerce' ) );
+		$refund_id = $response['refund_id'];
+
+		// The refund exists from here on, so nothing below may return an
+		// error that invites creating a second one. A refund can legitimately
+		// still be processing on the first read — with no account number yet —
+		// so poll briefly and defer to the merchant portal if it stays that way.
+		$refund = array();
+		for ( $attempt = 0; $attempt < self::INLINE_POLL_ATTEMPTS; $attempt++ ) {
+			if ( $attempt > 0 ) {
+				sleep( self::INLINE_POLL_DELAY );
+			}
+
+			$result = $client->get_refund( $refund_id );
+			if ( is_wp_error( $result ) ) {
+				continue;
+			}
+
+			$refund = $result;
+			if ( ! empty( $refund['account_number'] ) || ( isset( $refund['status'] ) && 'failed' === $refund['status'] ) ) {
+				break;
+			}
 		}
 
-		$order->add_order_note(
-			sprintf(
-				/* translators: 1: amount, 2: bank account number, 3: refund ID, 4: reason */
-				__( 'This payment was settled by bank transfer, so BlinkPay\'s refund does not move money. Pay NZD %1$s to the customer\'s account %2$s from your own bank. BlinkPay refund reference: %3$s. %4$s', 'blinkpay-nz-for-woocommerce' ),
-				$this->format_amount( $amount ),
-				$refund['account_number'],
-				$response['refund_id'],
-				$reason ? $reason : ''
-			)
-		);
+		if ( isset( $refund['status'] ) && 'failed' === $refund['status'] ) {
+			/* translators: %s: refund ID */
+			return new WP_Error( 'blinkpay_refund_failed', sprintf( __( 'BlinkPay reported refund %s as failed; no account number was retrieved.', 'blinkpay-nz-for-woocommerce' ), $refund_id ) );
+		}
+
+		if ( empty( $refund['account_number'] ) ) {
+			$order->add_order_note(
+				sprintf(
+					/* translators: 1: amount, 2: refund ID, 3: reason */
+					__( 'This payment was settled by bank transfer, so BlinkPay\'s refund does not move money, and the refund is still processing. Retrieve the customer\'s account number for refund %2$s from the BlinkPay merchant portal, then pay NZD %1$s from your own bank. %3$s', 'blinkpay-nz-for-woocommerce' ),
+					$this->format_amount( $amount ),
+					$refund_id,
+					$reason ? $reason : ''
+				)
+			);
+		} else {
+			$order->add_order_note(
+				sprintf(
+					/* translators: 1: amount, 2: bank account number, 3: refund ID, 4: reason */
+					__( 'This payment was settled by bank transfer, so BlinkPay\'s refund does not move money. Pay NZD %1$s to the customer\'s account %2$s from your own bank. BlinkPay refund reference: %3$s. %4$s', 'blinkpay-nz-for-woocommerce' ),
+					$this->format_amount( $amount ),
+					$refund['account_number'],
+					$refund_id,
+					$reason ? $reason : ''
+				)
+			);
+		}
 
 		// The customer sees (and is emailed) that the refund arrives by
 		// manual bank transfer; the account number stays in the private note.

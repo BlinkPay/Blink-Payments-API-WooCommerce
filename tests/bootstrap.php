@@ -16,6 +16,9 @@ define( 'WC_BLINKPAY_PLUGIN_URL', 'https://example.test/wp-content/plugins/blink
 $GLOBALS['wc_blinkpay_scheduled_events'] = array();
 $GLOBALS['wc_blinkpay_test_orders']      = array();
 $GLOBALS['wc_blinkpay_notices']          = array();
+$GLOBALS['wc_blinkpay_options']          = array();
+$GLOBALS['wc_blinkpay_transients']       = array();
+$GLOBALS['wc_blinkpay_http_responses']   = array();
 
 /**
  * Resets the recorded state between tests.
@@ -24,6 +27,9 @@ function wc_blinkpay_tests_reset() {
 	$GLOBALS['wc_blinkpay_scheduled_events'] = array();
 	$GLOBALS['wc_blinkpay_test_orders']      = array();
 	$GLOBALS['wc_blinkpay_notices']          = array();
+	$GLOBALS['wc_blinkpay_options']          = array();
+	$GLOBALS['wc_blinkpay_transients']       = array();
+	$GLOBALS['wc_blinkpay_http_responses']   = array();
 }
 
 // --- WordPress function stubs -----------------------------------------------
@@ -50,6 +56,50 @@ function esc_attr( $text ) {
 
 function wp_kses_post( $content ) {
 	return $content;
+}
+
+function get_option( $option, $default_value = false ) {
+	return isset( $GLOBALS['wc_blinkpay_options'][ $option ] ) ? $GLOBALS['wc_blinkpay_options'][ $option ] : $default_value;
+}
+
+function update_option( $option, $value, $autoload = null ) {
+	$GLOBALS['wc_blinkpay_options'][ $option ] = $value;
+	return true;
+}
+
+function delete_option( $option ) {
+	unset( $GLOBALS['wc_blinkpay_options'][ $option ] );
+	return true;
+}
+
+function get_transient( $transient ) {
+	return isset( $GLOBALS['wc_blinkpay_transients'][ $transient ] ) ? $GLOBALS['wc_blinkpay_transients'][ $transient ] : false;
+}
+
+function set_transient( $transient, $value, $expiration = 0 ) {
+	$GLOBALS['wc_blinkpay_transients'][ $transient ] = $value;
+	return true;
+}
+
+function delete_transient( $transient ) {
+	unset( $GLOBALS['wc_blinkpay_transients'][ $transient ] );
+	return true;
+}
+
+function wp_json_encode( $data ) {
+	return json_encode( $data );
+}
+
+function wp_remote_post( $url, $args = array() ) {
+	return array_shift( $GLOBALS['wc_blinkpay_http_responses'] );
+}
+
+function wp_remote_retrieve_response_code( $response ) {
+	return isset( $response['response']['code'] ) ? $response['response']['code'] : '';
+}
+
+function wp_remote_retrieve_body( $response ) {
+	return isset( $response['body'] ) ? $response['body'] : '';
 }
 
 /**
@@ -220,6 +270,10 @@ class WC_Payment_Gateway {
 	public function process_admin_options() {
 		return true;
 	}
+
+	public function supports( $feature ) {
+		return in_array( $feature, $this->supports, true );
+	}
 }
 
 /**
@@ -341,6 +395,7 @@ class WC_BlinkPay_Test_Order {
 	}
 }
 
+require_once dirname( __DIR__ ) . '/includes/class-wc-blinkpay-api-client.php';
 require_once dirname( __DIR__ ) . '/includes/class-wc-blinkpay-gateway.php';
 
 // --- Test doubles -------------------------------------------------------------
@@ -379,6 +434,9 @@ class WC_BlinkPay_Fake_API_Client {
 	/** @var array[] Refund payloads sent, in order. */
 	public $refund_calls = array();
 
+	/** @var string[]|null The canned granted scopes; null means unknown. */
+	public $granted_scopes = null;
+
 	/** @var array */
 	private $create_responses;
 
@@ -406,6 +464,10 @@ class WC_BlinkPay_Fake_API_Client {
 
 	public function is_configured() {
 		return true;
+	}
+
+	public function get_granted_scopes() {
+		return $this->granted_scopes;
 	}
 
 	public function create_quick_payment( $payload, $idempotency_key ) {

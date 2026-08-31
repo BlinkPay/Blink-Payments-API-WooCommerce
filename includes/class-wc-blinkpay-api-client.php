@@ -76,6 +76,30 @@ class WC_BlinkPay_API_Client {
 	}
 
 	/**
+	 * Option key holding the scopes last granted to this client, scoped like
+	 * the token cache. An option rather than a transient, so the grant is
+	 * still known after the token itself has expired.
+	 *
+	 * @return string
+	 */
+	private function scope_cache_key() {
+		return 'wc_blinkpay_scopes_' . hash( 'sha256', ( $this->sandbox ? 'sandbox' : 'production' ) . '|' . $this->client_id );
+	}
+
+	/**
+	 * The scopes granted at the last token fetch, or null when they are
+	 * unknown — no token has been fetched yet, or the token response carried
+	 * no scope. Reads only the cache; never makes a request.
+	 *
+	 * @return string[]|null
+	 */
+	public function get_granted_scopes() {
+		$scope = get_option( $this->scope_cache_key(), '' );
+
+		return is_string( $scope ) && '' !== $scope ? preg_split( '/\s+/', trim( $scope ) ) : null;
+	}
+
+	/**
 	 * Returns a cached access token, fetching a new one when missing or forced.
 	 *
 	 * @param bool $force_refresh Discard any cached token first.
@@ -134,6 +158,14 @@ class WC_BlinkPay_API_Client {
 
 		$expires_in = isset( $body['expires_in'] ) ? (int) $body['expires_in'] : 3600;
 		set_transient( $this->token_cache_key(), $body['access_token'], max( 60, $expires_in - self::TOKEN_EXPIRY_BUFFER ) );
+
+		// The granted scope decides which features (refunds) are offered, so
+		// it is retained beyond the token's own lifetime.
+		if ( isset( $body['scope'] ) && is_string( $body['scope'] ) && '' !== $body['scope'] ) {
+			update_option( $this->scope_cache_key(), $body['scope'], false );
+		} else {
+			delete_option( $this->scope_cache_key() );
+		}
 
 		return $body['access_token'];
 	}

@@ -32,7 +32,7 @@ The return redirect alone is never treated as proof of payment — the outcome i
 
 How the customer paid decides how a refund works. A card payment is refunded through the card network: the plugin requests a full or partial refund and BlinkPay moves the money back — the order notes record the refund's status, and a refund still processing should be verified in the BlinkPay merchant portal. A bank payment is refunded with BlinkPay's account-number refund, which does not move money: it retrieves the bank account the customer paid from into a private order note so you can transfer the refund from your own bank, and adds a customer-visible note that the refund will arrive by bank transfer.
 
-WooCommerce's own **Refund manually** button is hidden on BlinkPay orders — it would record money as returned without BlinkPay involvement — so every refund goes through **Refund via BlinkPay**.
+WooCommerce's own **Refund manually** button is hidden on BlinkPay orders — it would record money as returned without BlinkPay involvement — so every refund goes through **Refund via BlinkPay**. That button is only offered when your BlinkPay credentials include the refund permissions (create:refund and view:refund); contact BlinkPay if you need them enabled.
 
 = Requirements =
 
