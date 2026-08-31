@@ -4,7 +4,7 @@ Tags: woocommerce, payment gateway, open banking, new zealand, bank payments
 Requires at least: 6.0
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.0.3
+Stable tag: 1.0.4
 License: MIT
 License URI: https://opensource.org/licenses/MIT
 
@@ -90,6 +90,9 @@ Enable **Debug logging** in the gateway settings, then read **WooCommerce → St
 Yes. The `wc_blinkpay_quick_payment_payload` filter modifies the quick payment request body and `wc_blinkpay_icon` filters the checkout icon URL. Source code and issues are on [GitHub](https://github.com/BlinkPay/Blink-Payments-API-WooCommerce).
 
 == Changelog ==
+
+= 1.0.4 =
+* Use SHA-256 instead of MD5 for the access-token cache key.
 
 = 1.0.3 =
 * Renamed the plugin to BlinkPay NZ for WooCommerce (slug: blinkpay-nz-for-woocommerce).
