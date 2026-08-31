@@ -189,10 +189,12 @@ class AmountVerificationTest extends TestCase {
 		$this->assertNotFalse( wp_next_scheduled( WC_BlinkPay_Gateway::STATUS_CHECK_HOOK, array( 607 ) ) );
 	}
 
-	public function test_a_payment_without_a_reported_amount_still_completes() {
+	public function test_a_payment_without_a_reported_amount_is_parked_for_the_merchant() {
 		$order   = new WC_BlinkPay_Test_Order( 605 );
 		$gateway = new WC_BlinkPay_Test_Gateway( new WC_BlinkPay_Fake_API_Client() );
 
+		// The API reports an amount for every completed payment, so a missing
+		// one is anomalous and must fail towards the merchant, not completion.
 		$outcome = $gateway->apply_payment_result(
 			$order,
 			array(
@@ -201,8 +203,12 @@ class AmountVerificationTest extends TestCase {
 			)
 		);
 
-		$this->assertSame( 'paid', $outcome );
-		$this->assertTrue( $order->is_paid() );
-		$this->assertSame( '', $order->get_meta( '_blinkpay_total_charge' ) );
+		$this->assertSame( 'pending', $outcome );
+		$this->assertFalse( $order->is_paid() );
+		$this->assertTrue( $order->has_status( 'on-hold' ) );
+		$this->assertSame( 'yes', $order->get_meta( '_blinkpay_amount_mismatch_flagged' ) );
+		$this->assertCount( 1, $order->notes );
+		$this->assertStringContainsString( 'did not report the amount', $order->notes[0] );
+		$this->assertStringContainsString( '49.95', $order->notes[0] );
 	}
 }

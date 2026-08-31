@@ -665,8 +665,8 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		if ( 'AcceptedSettlementCompleted' === $status ) {
 			$amount = isset( $payment['detail']['amount'] ) && is_array( $payment['detail']['amount'] ) ? $payment['detail']['amount'] : array();
 
-			if ( $this->is_amount_mismatched( $order, $amount ) ) {
-				$this->flag_amount_mismatch( $order, $payment_id, $amount['total'] );
+			if ( ! $this->is_amount_verified( $order, $amount ) ) {
+				$this->flag_amount_mismatch( $order, $payment_id, $amount );
 				return 'pending';
 			}
 
@@ -711,38 +711,39 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	}
 
 	/**
-	 * Whether the payment's reported amount differs from the order total in
-	 * either direction. The request body is filterable by third-party code,
-	 * so the gateway verifies what it was actually paid rather than trusting
-	 * the status alone — and an inflated amount is as wrong as a short one:
-	 * a legitimate surcharge lives in total_charge, never in total. The
-	 * comparison is on the pre-surcharge total — the price of the goods — and
-	 * in whole cents. An amount the API did not report cannot be verified and
-	 * does not block completion.
+	 * Whether the payment's reported amount matches the order total exactly.
+	 * The request body is filterable by third-party code, so the gateway
+	 * verifies what it was actually paid rather than trusting the status
+	 * alone — and an inflated amount is as wrong as a short one: a legitimate
+	 * surcharge lives in total_charge, never in total. The comparison is on
+	 * the pre-surcharge total — the price of the goods — and in whole cents.
+	 * The API reports an amount for every completed payment, so a missing one
+	 * is anomalous and fails the verification: an unverifiable payment is
+	 * parked for the merchant, never trusted.
 	 *
 	 * @param WC_Order $order  The order.
 	 * @param array    $amount The payment's amount model.
 	 * @return bool
 	 */
-	private function is_amount_mismatched( $order, array $amount ) {
+	private function is_amount_verified( $order, array $amount ) {
 		if ( ! isset( $amount['total'] ) ) {
 			return false;
 		}
 
-		return (int) round( (float) $amount['total'] * 100 ) !== (int) round( (float) $order->get_total() * 100 );
+		return (int) round( (float) $amount['total'] * 100 ) === (int) round( (float) $order->get_total() * 100 );
 	}
 
 	/**
-	 * Parks an order paid for the wrong amount on hold for the merchant
-	 * instead of silently completing it. Noted once: the deferred status
-	 * checks keep re-reading the same payment, and the merchant needs one
-	 * flag, not one per poll.
+	 * Parks an order paid for the wrong — or an unreported — amount on hold
+	 * for the merchant instead of silently completing it. Noted once: the
+	 * deferred status checks keep re-reading the same payment, and the
+	 * merchant needs one flag, not one per poll.
 	 *
 	 * @param WC_Order $order      The order.
 	 * @param string   $payment_id The payment ID.
-	 * @param string   $paid_total The paid amount reported by the API.
+	 * @param array    $amount     The payment's amount model.
 	 */
-	private function flag_amount_mismatch( $order, $payment_id, $paid_total ) {
+	private function flag_amount_mismatch( $order, $payment_id, array $amount ) {
 		if ( $order->get_meta( '_blinkpay_amount_mismatch_flagged' ) ) {
 			return;
 		}
@@ -750,13 +751,22 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		$order->update_meta_data( '_blinkpay_amount_mismatch_flagged', 'yes' );
 		$order->save();
 
-		$note = sprintf(
-			/* translators: 1: payment ID, 2: paid amount, 3: order total */
-			__( 'BlinkPay reports payment %1$s completed for NZD %2$s, but the order total is NZD %3$s. The order has not been completed automatically; verify the payment in the BlinkPay merchant portal and update the order manually.', 'blinkpay-nz-for-woocommerce' ),
-			$payment_id,
-			$this->format_amount( $paid_total ),
-			$this->format_amount( $order->get_total() )
-		);
+		if ( isset( $amount['total'] ) ) {
+			$note = sprintf(
+				/* translators: 1: payment ID, 2: paid amount, 3: order total */
+				__( 'BlinkPay reports payment %1$s completed for NZD %2$s, but the order total is NZD %3$s. The order has not been completed automatically; verify the payment in the BlinkPay merchant portal and update the order manually.', 'blinkpay-nz-for-woocommerce' ),
+				$payment_id,
+				$this->format_amount( $amount['total'] ),
+				$this->format_amount( $order->get_total() )
+			);
+		} else {
+			$note = sprintf(
+				/* translators: 1: payment ID, 2: order total */
+				__( 'BlinkPay reports payment %1$s completed but did not report the amount paid, so it cannot be verified against the order total of NZD %2$s. The order has not been completed automatically; verify the payment in the BlinkPay merchant portal and update the order manually.', 'blinkpay-nz-for-woocommerce' ),
+				$payment_id,
+				$this->format_amount( $order->get_total() )
+			);
+		}
 
 		if ( $order->has_status( 'on-hold' ) ) {
 			$order->add_order_note( $note );

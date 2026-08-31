@@ -114,6 +114,12 @@ class StatusCheckBackoffTest extends TestCase {
 								array(
 									'payment_id' => 'pay-202',
 									'status'     => 'AcceptedSettlementCompleted',
+									'detail'     => array(
+										'amount' => array(
+											'currency' => 'NZD',
+											'total'    => '49.95',
+										),
+									),
 								),
 							),
 						),

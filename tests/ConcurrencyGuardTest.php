@@ -187,6 +187,12 @@ class ConcurrencyGuardTest extends TestCase {
 					array(
 						'payment_id' => $payment_id,
 						'status'     => $status,
+						'detail'     => array(
+							'amount' => array(
+								'currency' => 'NZD',
+								'total'    => '49.95',
+							),
+						),
 					),
 				),
 			),

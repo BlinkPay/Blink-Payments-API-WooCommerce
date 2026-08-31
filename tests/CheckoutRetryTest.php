@@ -110,6 +110,12 @@ class CheckoutRetryTest extends TestCase {
 					array(
 						'payment_id' => 'pay-703',
 						'status'     => 'AcceptedSettlementCompleted',
+						'detail'     => array(
+							'amount' => array(
+								'currency' => 'NZD',
+								'total'    => '49.95',
+							),
+						),
 					)
 				),
 			)
@@ -199,6 +205,12 @@ class CheckoutRetryTest extends TestCase {
 					array(
 						'payment_id' => 'pay-new-settled',
 						'status'     => 'AcceptedSettlementCompleted',
+						'detail'     => array(
+							'amount' => array(
+								'currency' => 'NZD',
+								'total'    => '49.95',
+							),
+						),
 					)
 				),
 			),

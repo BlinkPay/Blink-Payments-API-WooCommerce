@@ -46,6 +46,12 @@ class RefundTypeTest extends TestCase {
 				'payment_id'      => 'pay-400',
 				'status'          => 'AcceptedSettlementCompleted',
 				'accepted_reason' => 'card_network_accepted',
+				'detail'          => array(
+					'amount' => array(
+						'currency' => 'NZD',
+						'total'    => '49.95',
+					),
+				),
 			)
 		);
 
