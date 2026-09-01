@@ -123,9 +123,10 @@ Yes. The `wc_blinkpay_quick_payment_payload` filter modifies the quick payment r
 * Discard the previous attempt's payment state on a retried checkout, so a refund always targets the payment that settled — never a rejected earlier attempt.
 * Keep a terminal consent over an in-flight payment pending rather than failed, so a retry can never start a second debit while money may still be moving.
 * Park a completed payment whose amount the API did not report on hold for the merchant, instead of completing it unverified.
-* Show the customer's account number for a bank refund in a panel on the order screen, fetched live from BlinkPay each time and never stored in WordPress.
+* Show the customer's account number for a bank refund in a panel on the order screen, fetched live from BlinkPay each time and never stored in WordPress; each transfer can be marked done so the panel never instructs the same refund twice, and the panel fails fast when BlinkPay is unreachable.
 * Bound the unpaid-order cancellation exemption by order age, so a site whose cron is not running cannot hold stock indefinitely.
 * Return a retried order to pending while the customer pays the fresh payment, and release every lock even when a third-party hook throws.
+* Keep a cancelled order cancelled when its return URL is replayed, so a settlement after cancellation is always surfaced loudly, and bound the deferred checks' lock-contention retries.
 
 = 1.0.4 =
 * Use SHA-256 instead of MD5 for the access-token cache key.
