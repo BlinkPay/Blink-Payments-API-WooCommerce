@@ -212,14 +212,26 @@ class RefundTypeTest extends TestCase {
 			$client->refund_calls[0]
 		);
 
-		// The private note carries the obligation and where to find the
-		// account number; the number itself stays in the BlinkPay portal so
-		// no bank account PII lands in order notes, exports or backups.
+		// The private note carries the obligation and points at the order
+		// screen's panel; the number itself is never persisted, so no bank
+		// account PII lands in order notes, exports or backups.
 		$this->assertCount( 1, $order->notes );
 		$this->assertStringContainsString( 'does not move money', $order->notes[0] );
-		$this->assertStringContainsString( 'merchant portal', $order->notes[0] );
+		$this->assertStringContainsString( 'manual refunds panel', $order->notes[0] );
 		$this->assertStringContainsString( 'rf-403', $order->notes[0] );
 		$this->assertStringNotContainsString( '01-2345-6789012-00', $order->notes[0] );
+
+		// The panel's source of truth: only the refund ID and amount are
+		// recorded against the order.
+		$this->assertSame(
+			array(
+				array(
+					'refund_id' => 'rf-403',
+					'amount'    => '49.95',
+				),
+			),
+			$order->get_meta( '_blinkpay_manual_refunds' )
+		);
 
 		// The obligation is also obvious beyond the private note: the customer
 		// is told to expect a bank transfer, without the account number.
@@ -343,12 +355,61 @@ class RefundTypeTest extends TestCase {
 		$result = $gateway->process_refund( 408, 49.95, '' );
 
 		// The refund exists, so an error here would invite creating a second
-		// one; the merchant is deferred to the portal instead.
+		// one; the merchant is deferred to the panel and the portal instead.
 		$this->assertTrue( $result );
 		$this->assertCount( 1, $order->notes );
 		$this->assertStringContainsString( 'rf-408', $order->notes[0] );
-		$this->assertStringContainsString( 'merchant portal', $order->notes[0] );
+		$this->assertStringContainsString( 'manual refunds panel', $order->notes[0] );
 		$this->assertCount( 1, $order->customer_notes );
+	}
+
+	public function test_the_order_screen_panel_fetches_the_account_number_live() {
+		$order  = $this->register_paid_order( 412, 'source_bank_payment_sent' );
+		$client = new WC_BlinkPay_Fake_API_Client(
+			array(),
+			array(),
+			array( array( 'refund_id' => 'rf-412' ) ),
+			array(
+				// The refund-time poll, then the panel's render-time fetch.
+				array(
+					'refund_id'      => 'rf-412',
+					'account_number' => '01-2345-6789012-00',
+				),
+				array(
+					'refund_id'      => 'rf-412',
+					'status'         => 'completed',
+					'account_number' => '01-2345-6789012-00',
+				),
+			)
+		);
+
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		$this->assertTrue( $gateway->process_refund( 412, 49.95, '' ) );
+
+		$rows = $gateway->get_manual_refund_instructions( $order );
+
+		$this->assertSame(
+			array(
+				array(
+					'refund_id'      => 'rf-412',
+					'amount'         => '49.95',
+					'account_number' => '01-2345-6789012-00',
+				),
+			),
+			$rows,
+			'The panel must show the number the API reports at render time.'
+		);
+
+		// The canned responses are exhausted, so the next render's fetch
+		// errors: the row survives with no number and defers to the portal.
+		$rows = $gateway->get_manual_refund_instructions( $order );
+
+		$this->assertSame( '', $rows[0]['account_number'], 'An unreachable API must degrade to the portal, not break the panel.' );
+
+		// The number was displayed, never stored.
+		$this->assertStringNotContainsString( '01-2345-6789012-00', wp_json_encode( $order->get_meta( '_blinkpay_manual_refunds' ) ) );
+		$this->assertStringNotContainsString( '01-2345-6789012-00', implode( ' ', $order->notes ) );
 	}
 
 	public function test_an_account_number_refund_reported_failed_rejects_the_woocommerce_refund() {

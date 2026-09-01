@@ -105,6 +105,52 @@ function wc_blinkpay_init() {
 	// changes cannot bypass.
 	add_action( 'admin_head', 'wc_blinkpay_hide_manual_refund_button' );
 	add_action( 'woocommerce_create_refund', 'wc_blinkpay_block_manual_refund', 10, 2 );
+
+	// The customer's account number for a manual (account_number) refund is
+	// shown in this panel, fetched live from the BlinkPay API at render time
+	// — visible to the merchant on the order screen, never stored in
+	// WordPress.
+	add_action( 'add_meta_boxes', 'wc_blinkpay_register_manual_refunds_panel', 10, 2 );
+}
+
+/**
+ * Registers the BlinkPay manual refunds panel on the order edit screen (the
+ * HPOS screen and the legacy post editor) for BlinkPay orders carrying at
+ * least one account_number refund. The panel shows the customer's account
+ * number fetched live from the API, so the merchant can make the transfer
+ * straight from the order page without the number ever being persisted.
+ *
+ * @param string $screen_id The current screen ID (the post type on the legacy editor).
+ * @param mixed  $object    The order (HPOS) or post (legacy) being edited.
+ */
+function wc_blinkpay_register_manual_refunds_panel( $screen_id, $object ) {
+	if ( ! in_array( $screen_id, array( 'shop_order', 'woocommerce_page_wc-orders' ), true ) ) {
+		return;
+	}
+
+	if ( $object instanceof WC_Abstract_Order ) {
+		$order = $object;
+	} else {
+		$order = wc_get_order( is_object( $object ) && isset( $object->ID ) ? $object->ID : 0 );
+	}
+
+	if ( ! $order || 'blinkpay' !== $order->get_payment_method() || ! $order->get_meta( '_blinkpay_manual_refunds' ) ) {
+		return;
+	}
+
+	add_meta_box(
+		'wc-blinkpay-manual-refunds',
+		__( 'BlinkPay manual refunds', 'blinkpay-nz-for-woocommerce' ),
+		function () use ( $order ) {
+			$gateway = wc_blinkpay_gateway();
+			if ( $gateway ) {
+				$gateway->render_manual_refund_panel( $order );
+			}
+		},
+		$screen_id,
+		'side',
+		'high'
+	);
 }
 
 /**

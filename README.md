@@ -3,7 +3,7 @@
 Accept New Zealand bank payments in WooCommerce through [BlinkPay](https://www.blinkpay.co.nz) open banking:
 
 - **Blink PayNow** — one-off payments at checkout, via quick payments.
-- **Refunds** — card payments are refunded through the card network in full or in part; bank payments make the customer's account number available in the BlinkPay merchant portal for a manual bank transfer.
+- **Refunds** — card payments are refunded through the card network in full or in part; bank payments show the customer's account number on the order screen (fetched live, never stored) for a manual bank transfer.
 
 Customers are sent to BlinkPay's hosted gateway, choose their bank — or card, when card payments are enabled for the BlinkPay merchant account — and authorise the payment. Card is where BlinkPay surcharging applies.
 
@@ -61,7 +61,7 @@ How the payment settled — its `accepted_reason`, recorded when the payment com
 
 A card payment (`card_network_accepted`) is refunded with a money-moving type — `full_refund` when the whole order total is refunded and no surcharge was recorded, `partial_refund` (carrying the exact amount) otherwise — and both carry the configured PCR. The refunds API accepts no idempotency key, so refunds run under the plugin's per-order lock and a second submission is refused while one is in flight. A `201` from the refunds API does not mean the money has moved, so the plugin retrieves the refund and acts on its status: `failed` rejects the WooCommerce refund outright, `completed` is recorded as done, and anything else is noted with what the merchant must still do — authorise the refund from their own bank when the response carries a `consent_redirect`, or verify it completes in the merchant portal.
 
-A bank payment (`source_bank_payment_sent`, or an order from before the reason was recorded) uses the `account_number` refund type, which **does not move money**. It makes the bank account number the customer paid from available in the BlinkPay merchant portal so you can transfer the refund from your own bank — the private order note carries the refund reference and points you there, and the number itself is deliberately never copied into WordPress — and adds a customer-visible note that the refund will arrive by bank transfer, so the outstanding obligation is not buried in a private note.
+A bank payment (`source_bank_payment_sent`, or an order from before the reason was recorded) uses the `account_number` refund type, which **does not move money**. The bank account number the customer paid from is shown in the **BlinkPay manual refunds** panel on the order screen so you can transfer the refund from your own bank — the panel fetches the number live from the BlinkPay API each time it renders, so the number is displayed but deliberately never stored in WordPress (it is also available in the BlinkPay merchant portal). The private order note carries the refund reference and points at the panel, and a customer-visible note says the refund will arrive by bank transfer, so the outstanding obligation is not buried in a private note.
 
 WooCommerce's own **Refund manually** button is hidden on BlinkPay orders and, more to the point, a manual money-carrying refund is rejected server-side — it would record money as returned without BlinkPay involvement — so every refund goes through **Refund via BlinkPay** (zero-amount restock-only corrections are still allowed). Refund support is advertised from the scopes in the last token grant (`create:refund` and `view:refund`, retained in a hashed `wc_blinkpay_scopes_*` option), so merchants whose credentials lack them never see a Refund button they cannot use; while the grant is unknown the button is offered, and a 403 names the missing permissions.
 
@@ -78,6 +78,7 @@ WooCommerce's own **Refund manually** button is hidden on BlinkPay orders and, m
 | `_blinkpay_settled_after_cancellation` | Set when the payment settled after the order had already been cancelled, so the warning is raised once and the parked order stays parked |
 | `_blinkpay_status_checks` | How many deferred status checks have run; spaces the polling schedule and ends it after 36 hours |
 | `_blinkpay_lock_retries` | Consecutive deferred checks that found the order locked by another operation; cleared by any check that runs |
+| `_blinkpay_manual_refunds` | The account-number refunds owed by manual bank transfer (refund ID and amount only — the account number is fetched live, never stored) |
 | `_blinkpay_idempotency_*` | Idempotency keys, scoped to the current payment attempt and discarded once bound to a payment |
 
 ## Extensibility
@@ -95,7 +96,7 @@ WooCommerce's own **Refund manually** button is hidden on BlinkPay orders and, m
 ## Security notes
 
 - The client secret is stored in the WordPress options table unless you use the `wp-config.php` constants above.
-- The plugin never stores bank account details; the customer authorises directly with their bank, and an account-number refund leaves the customer's account number in the BlinkPay merchant portal rather than copying it into WordPress, so it never lands in order notes, exports or database backups.
+- The plugin never stores bank account details; the customer authorises directly with their bank, and an account-number refund shows the customer's account number on the order screen by fetching it live from the BlinkPay API rather than copying it into WordPress, so it never lands in order notes, exports or database backups.
 - The customer identifier sent to BlinkPay is a SHA-256 hash — of the WooCommerce customer ID for registered customers, of the billing email for guests, and omitted entirely when neither exists. Hashing keeps the raw value out of the request, but it is not anonymisation: a hash of a known email address can be matched back to that address.
 
 ## Development
