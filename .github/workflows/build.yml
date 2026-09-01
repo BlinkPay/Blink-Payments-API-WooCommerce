@@ -44,6 +44,9 @@ jobs:
         run: vendor/bin/phpunit
 
   snyk:
+    # Scans run on master only; pull requests get Sonar alone, and tag
+    # builds only lint, test, package and release.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     needs: lint
     runs-on: ubuntu-latest
     steps:
@@ -62,6 +65,7 @@ jobs:
         continue-on-error: true
 
   sonar:
+    if: github.event_name == 'pull_request' || ( github.event_name == 'push' && github.ref == 'refs/heads/master' )
     needs: lint
     runs-on: ubuntu-latest
     steps:
