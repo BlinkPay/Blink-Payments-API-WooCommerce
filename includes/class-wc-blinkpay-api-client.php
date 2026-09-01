@@ -24,6 +24,8 @@ class WC_BlinkPay_API_Client {
 
 	const REQUEST_TIMEOUT = 30;
 
+	const MEDIA_TYPE_JSON = 'application/json';
+
 	/** @var string */
 	private $client_id;
 
@@ -145,7 +147,7 @@ class WC_BlinkPay_API_Client {
 			array(
 				'headers' => array(
 					'Content-Type' => 'application/x-www-form-urlencoded',
-					'Accept'       => 'application/json',
+					'Accept'       => self::MEDIA_TYPE_JSON,
 				),
 				'body'    => http_build_query(
 					array(
@@ -252,14 +254,14 @@ class WC_BlinkPay_API_Client {
 			'headers' => array_merge(
 				array(
 					'Authorization' => 'Bearer ' . $token,
-					'Accept'        => 'application/json',
+					'Accept'        => self::MEDIA_TYPE_JSON,
 				),
 				array_filter( $headers )
 			),
 		);
 
 		if ( null !== $body ) {
-			$args['headers']['Content-Type'] = 'application/json';
+			$args['headers']['Content-Type'] = self::MEDIA_TYPE_JSON;
 			$args['body']                    = wp_json_encode( $body );
 		}
 

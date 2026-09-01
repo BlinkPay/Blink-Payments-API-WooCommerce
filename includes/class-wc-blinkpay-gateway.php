@@ -201,14 +201,15 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	 * @return string
 	 */
 	public function generate_callback_url_html( $key, $data ) {
+		$field_id = $this->get_field_key( $key );
 		ob_start();
 		?>
-		<tr valign="top">
+		<tr>
 			<th scope="row" class="titledesc">
-				<label><?php echo wp_kses_post( $data['title'] ); ?></label>
+				<label for="<?php echo esc_attr( $field_id ); ?>"><?php echo wp_kses_post( $data['title'] ); ?></label>
 			</th>
 			<td class="forminp">
-				<input class="input-text regular-input" type="text" value="<?php echo esc_attr( $this->get_callback_url() ); ?>" readonly="readonly" onfocus="this.select();" />
+				<input class="input-text regular-input" type="text" id="<?php echo esc_attr( $field_id ); ?>" value="<?php echo esc_attr( $this->get_callback_url() ); ?>" readonly="readonly" onfocus="this.select();" />
 				<p class="description"><?php echo wp_kses_post( $data['description'] ); ?></p>
 			</td>
 		</tr>
@@ -218,13 +219,13 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 
 	/**
 	 * The callback URL field is display-only: never persist a value for it,
-	 * so it can never go stale if the site URL changes.
+	 * so it can never go stale if the site URL changes. WC_Settings_API calls
+	 * this with the field key and posted value; neither matters, and PHP
+	 * ignores the extra arguments.
 	 *
-	 * @param string $key   The field key.
-	 * @param mixed  $value The posted value.
 	 * @return string
 	 */
-	public function validate_callback_url_field( $key, $value ) {
+	public function validate_callback_url_field() {
 		return '';
 	}
 
@@ -655,42 +656,55 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		// it — and before the redirect: exit does not unwind the stack, so a
 		// release placed after wp_safe_redirect() would never run.
 		try {
-			// Re-read now the lock is held: the snapshot above may predate a
-			// completion by the process that has just released the lock, and
-			// a stale failure applied over it would show a paid order as
-			// failed.
-			$order = wc_get_order( $order_id );
-
-			if ( ! $order || $order->is_paid() ) {
-				$destination = $order ? $order->get_checkout_order_received_url() : wc_get_checkout_url();
-			} else {
-				// Any status other than blank or "pending" reports a
-				// non-success outcome, including values this version does not
-				// recognise. It is a hint, never terminal proof: a stale
-				// "cancelled" replayed from browser history must not fail an
-				// order whose debit is in flight.
-				if ( '' !== $status && 'pending' !== $status ) {
-					/* translators: %s: gateway status parameter */
-					$order->add_order_note( sprintf( __( 'The customer returned from the BlinkPay gateway with status %s; confirming the outcome through the API.', 'blinkpay-nz-for-woocommerce' ), $status ) );
-				}
-
-				if ( 'failed' === $this->confirm_quick_payment( $order ) ) {
-					// Keyed off the API-confirmed outcome, not the replayable
-					// URL parameter: every confirmed failure path means no
-					// money moved, so the message stays accurate by
-					// construction.
-					wc_add_notice( __( 'Your payment was not completed and you have not been charged. Please try again.', 'blinkpay-nz-for-woocommerce' ), 'error' );
-					$destination = $order->get_checkout_payment_url();
-				} else {
-					$destination = $order->get_checkout_order_received_url();
-				}
-			}
+			$destination = $this->resolve_return_destination( $order_id, $status );
 		} finally {
 			$this->release_order_lock( $order_id, $lock );
 		}
 
 		wp_safe_redirect( $destination );
 		exit;
+	}
+
+	/**
+	 * Decides where a customer returning from the gateway is sent, confirming
+	 * the payment outcome through the API. The caller holds the per-order
+	 * lock, and the order is re-read under it: the caller's snapshot may
+	 * predate a completion by the process that has just released the lock,
+	 * and a stale failure applied over it would show a paid order as failed.
+	 *
+	 * @param int    $order_id The order ID.
+	 * @param string $status   The gateway's status parameter, or ''.
+	 * @return string The URL to redirect the customer to.
+	 */
+	private function resolve_return_destination( $order_id, $status ) {
+		$order = wc_get_order( $order_id );
+
+		if ( ! $order ) {
+			return wc_get_checkout_url();
+		}
+
+		if ( $order->is_paid() ) {
+			return $order->get_checkout_order_received_url();
+		}
+
+		// Any status other than blank or "pending" reports a non-success
+		// outcome, including values this version does not recognise. It is a
+		// hint, never terminal proof: a stale "cancelled" replayed from
+		// browser history must not fail an order whose debit is in flight.
+		if ( '' !== $status && 'pending' !== $status ) {
+			/* translators: %s: gateway status parameter */
+			$order->add_order_note( sprintf( __( 'The customer returned from the BlinkPay gateway with status %s; confirming the outcome through the API.', 'blinkpay-nz-for-woocommerce' ), $status ) );
+		}
+
+		if ( 'failed' === $this->confirm_quick_payment( $order ) ) {
+			// Keyed off the API-confirmed outcome, not the replayable URL
+			// parameter: every confirmed failure path means no money moved,
+			// so the message stays accurate by construction.
+			wc_add_notice( __( 'Your payment was not completed and you have not been charged. Please try again.', 'blinkpay-nz-for-woocommerce' ), 'error' );
+			return $order->get_checkout_payment_url();
+		}
+
+		return $order->get_checkout_order_received_url();
 	}
 
 	/**
@@ -858,54 +872,75 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		}
 
 		if ( 'AcceptedSettlementCompleted' === $status ) {
-			$amount = isset( $payment['detail']['amount'] ) && is_array( $payment['detail']['amount'] ) ? $payment['detail']['amount'] : array();
-
-			// A payment settling after its order was cancelled — or an order
-			// already flagged as such — is surfaced for the merchant, never
-			// completed automatically: WooCommerce released any held stock at
-			// cancellation, so completing would claim goods the shop may no
-			// longer have. Checked before the amount: whatever was paid, the
-			// money moved after cancellation, and that warning must not be
-			// hidden behind a mismatch flag that would also re-fail on every
-			// later poll.
-			if ( $order->has_status( 'cancelled' ) || $order->get_meta( '_blinkpay_settled_after_cancellation' ) ) {
-				$this->flag_settled_payment_on_cancelled_order( $order, $payment, $amount );
-				return 'paid';
-			}
-
-			if ( ! $this->is_amount_verified( $order, $amount ) ) {
-				$this->flag_amount_mismatch( $order, $payment_id, $amount );
-				return 'pending';
-			}
-
-			if ( ! empty( $payment['accepted_reason'] ) ) {
-				// Card and bank payments refund differently, so how the
-				// payment settled is needed again at refund time.
-				$order->update_meta_data( '_blinkpay_accepted_reason', $payment['accepted_reason'] );
-			}
-			$this->record_charged_amount( $order, $amount );
-			$order->payment_complete( $payment_id );
-			/* translators: %s: payment ID */
-			$order->add_order_note( sprintf( __( 'BlinkPay payment %s completed.', 'blinkpay-nz-for-woocommerce' ), $payment_id ) );
-			return 'paid';
+			return $this->apply_settled_payment( $order, $payment, $payment_id );
 		}
 
 		if ( 'Rejected' === $status ) {
-			// A quick payment also carries a Rejected payment record when the
-			// consent itself was declined, so the consent status decides which
-			// party the note blames — a decline sent to bank support helps
-			// no one.
-			if ( 'Rejected' === $consent_status ) {
-				/* translators: %s: payment ID */
-				$this->fail_order( $order, sprintf( __( 'The BlinkPay consent was declined before the payment was authorised — typically the customer cancelling at the gateway or their bank — so payment %s was never made and no money moved.', 'blinkpay-nz-for-woocommerce' ), $payment_id ) );
-			} else {
-				/* translators: %s: payment ID */
-				$this->fail_order( $order, sprintf( __( 'BlinkPay payment %s was rejected by the bank.', 'blinkpay-nz-for-woocommerce' ), $payment_id ) );
-			}
+			$this->fail_rejected_payment( $order, $payment_id, $consent_status );
 			return 'failed';
 		}
 
 		return 'pending';
+	}
+
+	/**
+	 * Applies a completed payment to the order. A payment settling after its
+	 * order was cancelled — or an order already flagged as such — is surfaced
+	 * for the merchant, never completed automatically: WooCommerce released
+	 * any held stock at cancellation, so completing would claim goods the
+	 * shop may no longer have. Checked before the amount: whatever was paid,
+	 * the money moved after cancellation, and that warning must not be hidden
+	 * behind a mismatch flag that would also re-fail on every later poll.
+	 *
+	 * @param WC_Order $order      The order.
+	 * @param array    $payment    The payment model from the API.
+	 * @param string   $payment_id The payment ID.
+	 * @return string One of 'paid' or 'pending'.
+	 */
+	private function apply_settled_payment( $order, array $payment, $payment_id ) {
+		$amount = isset( $payment['detail']['amount'] ) && is_array( $payment['detail']['amount'] ) ? $payment['detail']['amount'] : array();
+
+		if ( $order->has_status( 'cancelled' ) || $order->get_meta( '_blinkpay_settled_after_cancellation' ) ) {
+			$this->flag_settled_payment_on_cancelled_order( $order, $payment, $amount );
+			return 'paid';
+		}
+
+		if ( ! $this->is_amount_verified( $order, $amount ) ) {
+			$this->flag_amount_mismatch( $order, $payment_id, $amount );
+			return 'pending';
+		}
+
+		if ( ! empty( $payment['accepted_reason'] ) ) {
+			// Card and bank payments refund differently, so how the payment
+			// settled is needed again at refund time.
+			$order->update_meta_data( '_blinkpay_accepted_reason', $payment['accepted_reason'] );
+		}
+		$this->record_charged_amount( $order, $amount );
+		$order->payment_complete( $payment_id );
+		/* translators: %s: payment ID */
+		$order->add_order_note( sprintf( __( 'BlinkPay payment %s completed.', 'blinkpay-nz-for-woocommerce' ), $payment_id ) );
+		return 'paid';
+	}
+
+	/**
+	 * Fails the order for a rejected payment. A quick payment also carries a
+	 * Rejected payment record when the consent itself was declined, so the
+	 * consent status decides which party the note blames — a decline sent to
+	 * bank support helps no one.
+	 *
+	 * @param WC_Order $order          The order.
+	 * @param string   $payment_id     The payment ID.
+	 * @param string   $consent_status The parent consent's status.
+	 */
+	private function fail_rejected_payment( $order, $payment_id, $consent_status ) {
+		if ( 'Rejected' === $consent_status ) {
+			/* translators: %s: payment ID */
+			$this->fail_order( $order, sprintf( __( 'The BlinkPay consent was declined before the payment was authorised — typically the customer cancelling at the gateway or their bank — so payment %s was never made and no money moved.', 'blinkpay-nz-for-woocommerce' ), $payment_id ) );
+			return;
+		}
+
+		/* translators: %s: payment ID */
+		$this->fail_order( $order, sprintf( __( 'BlinkPay payment %s was rejected by the bank.', 'blinkpay-nz-for-woocommerce' ), $payment_id ) );
 	}
 
 	/**
@@ -1627,34 +1662,53 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 				continue;
 			}
 
-			$row = array(
-				'refund_id'      => $refund['refund_id'],
-				'amount'         => isset( $refund['amount'] ) ? $refund['amount'] : '',
-				'recorded'       => isset( $refund['recorded'] ) ? $refund['recorded'] : '',
-				'paid_on'        => isset( $refund['paid_on'] ) ? $refund['paid_on'] : '',
-				'account_number' => '',
-				'status'         => '',
-			);
-
-			if ( '' === $row['paid_on'] && ! $unreachable ) {
-				$response = $client->get_refund( $refund['refund_id'] );
-				if ( is_wp_error( $response ) ) {
-					// One failure means the API is down or slow: stop
-					// fetching now and let the next renders skip it for a
-					// couple of minutes instead of holding the order screen
-					// open during the outage.
-					$unreachable = true;
-					set_transient( self::PANEL_UNREACHABLE_FLAG, 1, self::PANEL_UNREACHABLE_TTL );
-				} else {
-					$row['account_number'] = ! empty( $response['account_number'] ) ? $response['account_number'] : '';
-					$row['status']         = isset( $response['status'] ) ? $response['status'] : '';
-				}
-			}
-
-			$rows[] = $row;
+			$rows[] = $this->build_manual_refund_row( $client, $refund, $unreachable );
 		}
 
 		return $rows;
+	}
+
+	/**
+	 * Builds one manual-refunds panel row from a recorded obligation. Only an
+	 * outstanding obligation triggers a live fetch for the account number and
+	 * status, and only while the unreachable flag is clear — a fetch failure
+	 * sets it, so the remaining rows and the next couple of minutes' renders
+	 * skip the API instead of holding the order screen open during the outage.
+	 * The in-request flag is authoritative: the transient only carries it
+	 * across requests, and a filtered or failed transient write must not
+	 * re-enable fetching within this render.
+	 *
+	 * @param WC_BlinkPay_API_Client $client      The API client, with the panel timeout set.
+	 * @param array                  $refund      The recorded obligation.
+	 * @param bool                   $unreachable In/out: whether fetching has been abandoned.
+	 * @return array The panel row.
+	 */
+	private function build_manual_refund_row( $client, array $refund, &$unreachable ) {
+		$row = array(
+			'refund_id'      => $refund['refund_id'],
+			'amount'         => isset( $refund['amount'] ) ? $refund['amount'] : '',
+			'recorded'       => isset( $refund['recorded'] ) ? $refund['recorded'] : '',
+			'paid_on'        => isset( $refund['paid_on'] ) ? $refund['paid_on'] : '',
+			'account_number' => '',
+			'status'         => '',
+		);
+
+		if ( '' !== $row['paid_on'] || $unreachable ) {
+			return $row;
+		}
+
+		$response = $client->get_refund( $refund['refund_id'] );
+
+		if ( is_wp_error( $response ) ) {
+			$unreachable = true;
+			set_transient( self::PANEL_UNREACHABLE_FLAG, 1, self::PANEL_UNREACHABLE_TTL );
+			return $row;
+		}
+
+		$row['account_number'] = ! empty( $response['account_number'] ) ? $response['account_number'] : '';
+		$row['status']         = isset( $response['status'] ) ? $response['status'] : '';
+
+		return $row;
 	}
 
 	/**

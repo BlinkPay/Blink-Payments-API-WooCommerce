@@ -37,15 +37,37 @@ jobs:
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2 — pinned by SHA: a moving tag could be repointed at malicious code
         with:
           php-version: ${{ matrix.php-version }}
-          coverage: none
+          coverage: pcov
       - name: Install dependencies
         run: composer install --no-interaction --no-progress
       - name: Run unit tests
-        run: vendor/bin/phpunit
+        run: vendor/bin/phpunit --coverage-clover coverage.xml
+      # Sonar does not run tests; it reads the coverage report generated here,
+      # measured once on the newest PHP.
+      - name: Upload coverage report
+        if: matrix.php-version == '8.4'
+        uses: actions/upload-artifact@v5
+        with:
+          name: coverage
+          path: coverage.xml
+
+  plugin-check:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # Checked as it ships: running against the repository root would raise
+      # findings about development files the zip never contains.
+      - name: Build plugin directory
+        run: .github/build-plugin.sh
+      - name: Run Plugin Check
+        uses: WordPress/plugin-check-action@v1
+        with:
+          build-dir: build/blinkpay-nz-for-woocommerce
 
   snyk:
-    # Scans run on master only; pull requests get Sonar alone, and tag
-    # builds only lint, test, package and release.
+    # Snyk runs on master pushes only; pull requests are covered by Sonar
+    # and Plugin Check.
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     needs: lint
     runs-on: ubuntu-latest
@@ -66,13 +88,17 @@ jobs:
 
   sonar:
     if: github.event_name == 'pull_request' || ( github.event_name == 'push' && github.ref == 'refs/heads/master' )
-    needs: lint
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
           # Sonar needs full history to attribute issues and measure new code.
           fetch-depth: 0
+      - name: Download coverage report
+        uses: actions/download-artifact@v5
+        with:
+          name: coverage
       - name: Run Sonar
         uses: sonarsource/sonarqube-scan-action@v5
         with:
@@ -80,7 +106,10 @@ jobs:
             -Dsonar.projectKey=blinkpay-nz-for-woocommerce
             -Dsonar.organization=blinkpay
             -Dsonar.sources=.
-            -Dsonar.exclusions=assets/images/**,.github/**
+            -Dsonar.exclusions=assets/images/**,.github/**,tests/**,coverage.xml
+            -Dsonar.tests=tests
+            -Dsonar.php.coverage.reportPaths=coverage.xml
+            -Dsonar.coverage.exclusions=uninstall.php
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
@@ -91,12 +120,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      # The zip unpacks to blinkpay-nz-for-woocommerce/, the plugin's canonical
-      # directory name, regardless of the repository name.
       - name: Build plugin zip
         run: |
-          mkdir -p build/blinkpay-nz-for-woocommerce
-          rsync -a --exclude='.git' --exclude='.claude' --exclude='.github' --exclude='.gitignore' --exclude='.phpunit.result.cache' --exclude='.wp-env.json' --exclude='build' --exclude='composer.json' --exclude='composer.lock' --exclude='phpunit.xml.dist' --exclude='tests' --exclude='vendor' ./ build/blinkpay-nz-for-woocommerce/
+          .github/build-plugin.sh
           cd build && zip -r blinkpay-nz-for-woocommerce.zip blinkpay-nz-for-woocommerce
       - name: Upload artifact
         uses: actions/upload-artifact@v5

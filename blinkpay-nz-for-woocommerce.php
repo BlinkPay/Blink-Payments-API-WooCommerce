@@ -47,6 +47,7 @@ function wc_blinkpay_init() {
 
 	require_once WC_BLINKPAY_PLUGIN_PATH . 'includes/class-wc-blinkpay-api-client.php';
 	require_once WC_BLINKPAY_PLUGIN_PATH . 'includes/class-wc-blinkpay-gateway.php';
+	require_once WC_BLINKPAY_PLUGIN_PATH . 'includes/class-wc-blinkpay-refund-blocked-exception.php';
 
 	add_filter(
 		'woocommerce_payment_gateways',
@@ -193,16 +194,18 @@ function wc_blinkpay_register_manual_refunds_panel( $screen_id, $object ) {
  *
  * @param WC_Order_Refund $refund The refund being created.
  * @param array           $args   The wc_create_refund() arguments.
- * @throws Exception When the refund would record a return BlinkPay was not involved in.
+ * @throws WC_BlinkPay_Refund_Blocked_Exception When the refund would record a return BlinkPay was not involved in.
  */
 function wc_blinkpay_block_manual_refund( $refund, $args ) {
 	if ( ! empty( $args['refund_payment'] ) || ( isset( $args['amount'] ) && (float) $args['amount'] <= 0 ) ) {
 		return;
 	}
 
-	$order = isset( $args['order_id'] ) ? wc_get_order( $args['order_id'] ) : false;
+	// Read in edit context: view context runs woocommerce_order_get_parent_id,
+	// and a financial control must not key off a filterable value.
+	$order = wc_get_order( $refund->get_parent_id( 'edit' ) );
 	if ( $order && 'blinkpay' === $order->get_payment_method() ) {
-		throw new Exception(
+		throw new WC_BlinkPay_Refund_Blocked_Exception(
 			esc_html__( 'BlinkPay orders cannot be refunded manually: a manual refund records money as returned while none has moved. Use "Refund via BlinkPay" instead.', 'blinkpay-nz-for-woocommerce' )
 		);
 	}
@@ -224,9 +227,16 @@ function wc_blinkpay_hide_manual_refund_button() {
 	}
 
 	// HPOS order screens carry the order in ?id=, the legacy post editor in ?post=.
-	// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only screen detection.
-	$order_id = isset( $_GET['id'] ) ? absint( $_GET['id'] ) : ( isset( $_GET['post'] ) ? absint( $_GET['post'] ) : 0 );
-	$order    = $order_id ? wc_get_order( $order_id ) : false;
+	// phpcs:disable WordPress.Security.NonceVerification.Recommended -- read-only screen detection.
+	if ( isset( $_GET['id'] ) ) {
+		$order_id = absint( $_GET['id'] );
+	} elseif ( isset( $_GET['post'] ) ) {
+		$order_id = absint( $_GET['post'] );
+	} else {
+		$order_id = 0;
+	}
+	// phpcs:enable
+	$order = $order_id ? wc_get_order( $order_id ) : false;
 
 	if ( $order && 'blinkpay' === $order->get_payment_method() ) {
 		echo '<style>.wc-order-refund-items .do-manual-refund { display: none !important; }</style>';

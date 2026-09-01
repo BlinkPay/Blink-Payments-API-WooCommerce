@@ -11,7 +11,6 @@
  */
 
 define( 'ABSPATH', __DIR__ . '/' );
-define( 'WC_BLINKPAY_PLUGIN_URL', 'https://example.test/wp-content/plugins/blinkpay-nz-for-woocommerce/' );
 
 $GLOBALS['wc_blinkpay_scheduled_events'] = array();
 $GLOBALS['wc_blinkpay_test_orders']      = array();
@@ -156,16 +155,28 @@ function add_action( $hook_name, $callback, $priority = 10, $accepted_args = 1 )
 	return true;
 }
 
+function add_filter( $hook_name, $callback, $priority = 10, $accepted_args = 1 ) {
+	return true;
+}
+
+function plugin_dir_path( $file ) {
+	return dirname( $file ) . '/';
+}
+
+function plugin_dir_url( $file ) {
+	return 'https://example.test/wp-content/plugins/blinkpay-nz-for-woocommerce/';
+}
+
+function plugin_basename( $file ) {
+	return 'blinkpay-nz-for-woocommerce/' . basename( $file );
+}
+
 function add_query_arg( $args, $url ) {
 	return $url . ( false === strpos( $url, '?' ) ? '?' : '&' ) . http_build_query( $args );
 }
 
 function wp_generate_uuid4() {
-	return sprintf( 'test-uuid-%06d', wp_rand( 0, 999999 ) );
-}
-
-function wp_rand( $min, $max ) {
-	return rand( $min, $max );
+	return sprintf( 'test-uuid-%06d', random_int( 0, 999999 ) );
 }
 
 function wp_schedule_single_event( $timestamp, $hook, $args = array() ) {
@@ -362,6 +373,10 @@ class WC_Payment_Gateway {
 		$this->settings = array();
 	}
 
+	public function get_field_key( $key ) {
+		return 'woocommerce_' . $this->id . '_' . $key;
+	}
+
 	public function get_option( $key, $empty_value = '' ) {
 		return isset( $this->settings[ $key ] ) && '' !== $this->settings[ $key ]
 			? $this->settings[ $key ]
@@ -400,6 +415,9 @@ class WC_BlinkPay_Test_Order {
 
 	/** @var string */
 	private $status = 'pending';
+
+	/** @var string */
+	private $payment_method = 'blinkpay';
 
 	/** @var string */
 	private $order_number = '';
@@ -442,7 +460,11 @@ class WC_BlinkPay_Test_Order {
 	}
 
 	public function get_payment_method() {
-		return 'blinkpay';
+		return $this->payment_method;
+	}
+
+	public function set_payment_method( $payment_method ) {
+		$this->payment_method = $payment_method;
 	}
 
 	public function get_checkout_order_received_url() {
@@ -544,10 +566,32 @@ class WC_BlinkPay_Test_Order {
 	}
 }
 
+// The main plugin file is loaded too, so its functions — the manual-refund
+// veto above all — are under test; its load-time hook registrations land in
+// the no-op stubs above.
+require_once dirname( __DIR__ ) . '/blinkpay-nz-for-woocommerce.php';
 require_once dirname( __DIR__ ) . '/includes/class-wc-blinkpay-api-client.php';
 require_once dirname( __DIR__ ) . '/includes/class-wc-blinkpay-gateway.php';
+require_once dirname( __DIR__ ) . '/includes/class-wc-blinkpay-refund-blocked-exception.php';
 
 // --- Test doubles -------------------------------------------------------------
+
+/**
+ * The slice of WC_Order_Refund the manual-refund veto reads.
+ */
+class WC_BlinkPay_Test_Order_Refund {
+
+	/** @var int */
+	private $parent_id;
+
+	public function __construct( $parent_id ) {
+		$this->parent_id = $parent_id;
+	}
+
+	public function get_parent_id( $context = 'view' ) {
+		return $this->parent_id;
+	}
+}
 
 /**
  * A gateway wired to a canned API client, so no HTTP is involved.
