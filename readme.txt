@@ -118,6 +118,14 @@ Yes. The `wc_blinkpay_quick_payment_payload` filter modifies the quick payment r
 * Refund a surcharged payment as a partial for the exact amount requested.
 * Keep orders still awaiting a payment outcome out of WooCommerce's unpaid-order cancellation, and surface a payment that settles after its order was cancelled by parking the order on hold with a prominent note instead of discarding the payment silently.
 * Confirm an order's existing quick payment before a retried checkout can create another, so a customer who authorised at their bank but never returned to the site cannot be debited twice.
+* Make the per-order lock genuinely atomic with a token-checked release, so two concurrent operations can never both proceed and an operation that overruns cannot free its successor's lock.
+* Hold the per-order lock across payment creation, so a double-submitted checkout cannot create two payments for one order.
+* Discard the previous attempt's payment state on a retried checkout, so a refund always targets the payment that settled — never a rejected earlier attempt.
+* Keep a terminal consent over an in-flight payment pending rather than failed, so a retry can never start a second debit while money may still be moving.
+* Park a completed payment whose amount the API did not report on hold for the merchant, instead of completing it unverified.
+* Show the customer's account number for a bank refund in a panel on the order screen, fetched live from BlinkPay each time and never stored in WordPress.
+* Bound the unpaid-order cancellation exemption by order age, so a site whose cron is not running cannot hold stock indefinitely.
+* Return a retried order to pending while the customer pays the fresh payment, and release every lock even when a third-party hook throws.
 
 = 1.0.4 =
 * Use SHA-256 instead of MD5 for the access-token cache key.
