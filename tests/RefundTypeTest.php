@@ -487,6 +487,112 @@ class RefundTypeTest extends TestCase {
 		$this->assertCount( $notes_before, $order->notes );
 	}
 
+	public function test_the_panel_escapes_hostile_values_and_offers_the_mark_action() {
+		$order = $this->register_paid_order( 415, 'source_bank_payment_sent' );
+		$order->update_meta_data(
+			'_blinkpay_manual_refunds',
+			array(
+				array(
+					'refund_id' => 'rf-<b>415</b>',
+					'amount'    => '49.95',
+					'recorded'  => '2026-09-01',
+				),
+			)
+		);
+
+		$client  = new WC_BlinkPay_Fake_API_Client(
+			array(),
+			array(),
+			array(),
+			array(
+				array(
+					'refund_id'      => 'rf-415',
+					'status'         => 'completed',
+					'account_number' => '01-23<script>alert(1)</script>',
+				),
+			)
+		);
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		ob_start();
+		$gateway->render_manual_refund_panel( $order );
+		$html = ob_get_clean();
+
+		$this->assertStringNotContainsString( '<script>', $html, 'A hostile account number must never reach the page unescaped.' );
+		$this->assertStringContainsString( '&lt;script&gt;', $html );
+		$this->assertStringNotContainsString( '<b>415</b>', $html );
+
+		// The discharge action is offered, carrying the order and refund.
+		$this->assertStringContainsString( 'Mark as transferred', $html );
+		$this->assertStringContainsString( 'wc_blinkpay_mark_refund_paid', $html );
+		$this->assertStringContainsString( 'name="order_id" value="415"', $html );
+	}
+
+	public function test_a_discharged_obligation_renders_as_history_without_the_mark_action() {
+		$order = $this->register_paid_order( 416, 'source_bank_payment_sent' );
+		$order->update_meta_data(
+			'_blinkpay_manual_refunds',
+			array(
+				array(
+					'refund_id' => 'rf-416',
+					'amount'    => '49.95',
+					'recorded'  => '2026-08-30',
+					'paid_on'   => '2026-08-31',
+				),
+			)
+		);
+
+		$client  = new WC_BlinkPay_Fake_API_Client();
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		ob_start();
+		$gateway->render_manual_refund_panel( $order );
+		$html = ob_get_clean();
+
+		$this->assertStringContainsString( 'Transferred on 2026-08-31', $html );
+		$this->assertStringContainsString( 'rf-416', $html );
+		$this->assertStringNotContainsString( 'Mark as transferred', $html, 'A discharged obligation must read as history, not instruct another transfer.' );
+		$this->assertSame( array(), $client->get_refund_calls, 'History needs no live account number.' );
+	}
+
+	public function test_the_panel_requires_the_order_management_capability() {
+		$order = $this->register_paid_order( 417, 'source_bank_payment_sent' );
+		$order->update_meta_data(
+			'_blinkpay_manual_refunds',
+			array(
+				array(
+					'refund_id' => 'rf-417',
+					'amount'    => '49.95',
+					'recorded'  => '2026-09-01',
+				),
+			)
+		);
+
+		$client  = new WC_BlinkPay_Fake_API_Client(
+			array(),
+			array(),
+			array(),
+			array(
+				array(
+					'refund_id'      => 'rf-417',
+					'account_number' => '01-2345-6789012-00',
+				),
+			)
+		);
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		$GLOBALS['wc_blinkpay_user_can'] = false;
+
+		$this->assertSame( array(), $gateway->get_manual_refund_instructions( $order ), 'Bank-account PII must not be handed to a caller without order management rights.' );
+
+		ob_start();
+		$gateway->render_manual_refund_panel( $order );
+		$html = ob_get_clean();
+
+		$this->assertStringNotContainsString( '01-2345-6789012-00', $html );
+		$this->assertSame( array(), $client->get_refund_calls );
+	}
+
 	public function test_an_account_number_refund_reported_failed_rejects_the_woocommerce_refund() {
 		$order  = $this->register_paid_order( 409, 'source_bank_payment_sent' );
 		$client = new WC_BlinkPay_Fake_API_Client(

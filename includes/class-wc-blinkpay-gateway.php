@@ -1603,6 +1603,14 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	 *                 unavailable or discharged).
 	 */
 	public function get_manual_refund_instructions( $order ) {
+		// Defence in depth for a public method that emits bank-account PII:
+		// today's only caller sits behind the order screen's own capability
+		// requirement, but any future caller — a shortcode, a REST field,
+		// another plugin relocating the panel — inherits this gate.
+		if ( ! current_user_can( 'edit_shop_orders' ) ) {
+			return array();
+		}
+
 		$refunds = $order->get_meta( '_blinkpay_manual_refunds' );
 		if ( ! is_array( $refunds ) || ! $refunds ) {
 			return array();

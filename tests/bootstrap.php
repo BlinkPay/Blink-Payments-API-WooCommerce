@@ -20,6 +20,7 @@ $GLOBALS['wc_blinkpay_options']          = array();
 $GLOBALS['wc_blinkpay_transients']       = array();
 $GLOBALS['wc_blinkpay_http_responses']   = array();
 $GLOBALS['wc_blinkpay_http_requests']    = array();
+$GLOBALS['wc_blinkpay_user_can']         = true;
 
 /**
  * Resets the recorded state between tests.
@@ -32,6 +33,7 @@ function wc_blinkpay_tests_reset() {
 	$GLOBALS['wc_blinkpay_transients']       = array();
 	$GLOBALS['wc_blinkpay_http_responses']   = array();
 	$GLOBALS['wc_blinkpay_http_requests']    = array();
+	$GLOBALS['wc_blinkpay_user_can']         = true;
 }
 
 // --- WordPress function stubs -----------------------------------------------
@@ -54,6 +56,34 @@ function sanitize_text_field( $str ) {
 
 function esc_attr( $text ) {
 	return htmlspecialchars( (string) $text, ENT_QUOTES );
+}
+
+function esc_html( $text ) {
+	return htmlspecialchars( (string) $text, ENT_QUOTES );
+}
+
+function esc_html__( $text, $domain = 'default' ) {
+	return esc_html( $text );
+}
+
+function esc_url( $url ) {
+	return $url;
+}
+
+function admin_url( $path = '' ) {
+	return 'https://example.test/wp-admin/' . $path;
+}
+
+function wp_nonce_field( $action = -1, $name = '_wpnonce', $referer = true, $display = true ) {
+	$field = '<input type="hidden" name="' . esc_attr( $name ) . '" value="nonce-' . esc_attr( (string) $action ) . '" />';
+	if ( $display ) {
+		echo $field; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- test stub, built from escaped parts.
+	}
+	return $field;
+}
+
+function current_user_can( $capability ) {
+	return $GLOBALS['wc_blinkpay_user_can'];
 }
 
 function wp_kses_post( $content ) {
