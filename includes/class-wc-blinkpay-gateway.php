@@ -1037,13 +1037,18 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	}
 
 	/**
-	 * Parks the order on hold and schedules deferred status checks.
+	 * Parks the order on hold and schedules deferred status checks. A
+	 * cancelled order stays cancelled, as in fail_order(): cancellation
+	 * released the held stock, and moving the order out of that status here
+	 * — a replayed return URL while the debit is settling would do it —
+	 * means a later settlement would complete the order without the
+	 * settled-after-cancellation warning ever firing.
 	 *
 	 * @param WC_Order $order The order.
 	 * @param string   $note  The order note explaining why.
 	 */
 	public function await_confirmation( $order, $note ) {
-		if ( $order->has_status( 'on-hold' ) ) {
+		if ( $order->has_status( array( 'on-hold', 'cancelled' ) ) ) {
 			$order->add_order_note( $note );
 		} else {
 			$order->update_status( 'on-hold', $note );

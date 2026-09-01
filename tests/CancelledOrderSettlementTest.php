@@ -249,6 +249,44 @@ class CancelledOrderSettlementTest extends TestCase {
 		$this->assertFalse( $gateway->has_unresolved_quick_payment( $stalled ), 'An order older than the whole check schedule must not stay exempt on a stalled counter.' );
 	}
 
+	public function test_a_replayed_return_url_does_not_uncancel_a_cancelled_order() {
+		$order = $this->register_order( 613 );
+		$order->update_meta_data( '_blinkpay_quick_payment_id', 'qp-613' );
+		$order->update_status( 'cancelled' );
+
+		// The customer's browser replays the return URL while the debit is
+		// still settling: every poll comes back pending.
+		$pending_client = new WC_BlinkPay_Fake_API_Client(
+			array(),
+			array(
+				array(
+					'consent' => array(
+						'status'   => 'Authorised',
+						'payments' => array(
+							array(
+								'payment_id' => 'pay-613',
+								'status'     => 'AcceptedSettlementInProcess',
+							),
+						),
+					),
+				),
+			)
+		);
+
+		$location = $this->handle_return( new WC_BlinkPay_Test_Gateway( $pending_client ), 613 );
+
+		$this->assertSame( 'https://example.test/order-received/613/', $location );
+		$this->assertSame( 'cancelled', $order->get_status(), 'A replayed return must not resurrect a cancelled order: the stock is gone and the cancellation guard keys off this status.' );
+
+		// The debit settles at the next deferred check: the cancellation
+		// warning must fire, never a silent completion.
+		$settled_gateway = new WC_BlinkPay_Test_Gateway( new WC_BlinkPay_Fake_API_Client( array(), array( $this->consent_with_settled_payment( 'pay-613' ) ) ) );
+		$settled_gateway->check_payment_status( 613 );
+
+		$this->assertTrue( $order->has_status( 'on-hold' ) );
+		$this->assertSame( 'yes', $order->get_meta( '_blinkpay_settled_after_cancellation' ), 'The settled-after-cancellation warning must survive the replayed return.' );
+	}
+
 	public function test_a_wrong_amount_settling_on_a_cancelled_order_still_raises_the_cancellation_warning() {
 		$order = $this->register_order( 612 );
 		$order->update_meta_data( '_blinkpay_quick_payment_id', 'qp-612' );
