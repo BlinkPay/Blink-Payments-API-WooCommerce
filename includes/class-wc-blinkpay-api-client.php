@@ -36,6 +36,9 @@ class WC_BlinkPay_API_Client {
 	/** @var bool */
 	private $debug;
 
+	/** @var int */
+	private $request_timeout = self::REQUEST_TIMEOUT;
+
 	/**
 	 * @param string $client_id     The BlinkPay client ID.
 	 * @param string $client_secret The BlinkPay client secret.
@@ -47,6 +50,18 @@ class WC_BlinkPay_API_Client {
 		$this->client_secret = trim( (string) $client_secret );
 		$this->sandbox       = (bool) $sandbox;
 		$this->debug         = (bool) $debug;
+	}
+
+	/**
+	 * Overrides the request timeout for this client instance, covering the
+	 * token fetch too. The default suits checkout and cron, where correctness
+	 * beats latency; an admin screen rendering inline must fail fast instead
+	 * of holding the page open for the full budget.
+	 *
+	 * @param int $seconds The timeout in seconds.
+	 */
+	public function set_request_timeout( $seconds ) {
+		$this->request_timeout = max( 1, (int) $seconds );
 	}
 
 	/**
@@ -141,7 +156,7 @@ class WC_BlinkPay_API_Client {
 					'',
 					'&'
 				),
-				'timeout' => self::REQUEST_TIMEOUT,
+				'timeout' => $this->request_timeout,
 			)
 		);
 
@@ -233,7 +248,7 @@ class WC_BlinkPay_API_Client {
 
 		$args = array(
 			'method'  => $method,
-			'timeout' => self::REQUEST_TIMEOUT,
+			'timeout' => $this->request_timeout,
 			'headers' => array_merge(
 				array(
 					'Authorization' => 'Bearer ' . $token,

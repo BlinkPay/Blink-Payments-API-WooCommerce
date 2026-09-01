@@ -560,6 +560,9 @@ class WC_BlinkPay_Fake_API_Client {
 	/** @var string[] Refund IDs retrieved, in order. */
 	public $get_refund_calls = array();
 
+	/** @var int|null The timeout a caller set, if any. */
+	public $request_timeout = null;
+
 	/** @var string[]|null The canned granted scopes; null means unknown. */
 	public $granted_scopes = null;
 
@@ -590,6 +593,10 @@ class WC_BlinkPay_Fake_API_Client {
 
 	public function is_configured() {
 		return true;
+	}
+
+	public function set_request_timeout( $seconds ) {
+		$this->request_timeout = $seconds;
 	}
 
 	public function get_granted_scopes() {

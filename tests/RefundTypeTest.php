@@ -416,6 +416,40 @@ class RefundTypeTest extends TestCase {
 		$this->assertStringNotContainsString( '01-2345-6789012-00', implode( ' ', $order->notes ) );
 	}
 
+	public function test_an_unreachable_api_short_circuits_panel_fetches() {
+		$order  = $this->register_paid_order( 414, 'source_bank_payment_sent' );
+		$client = new WC_BlinkPay_Fake_API_Client(
+			array(),
+			array(),
+			array( array( 'refund_id' => 'rf-414' ) ),
+			array(
+				array(
+					'refund_id'      => 'rf-414',
+					'account_number' => '01-2345-6789012-00',
+				),
+			)
+		);
+
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		$this->assertTrue( $gateway->process_refund( 414, 49.95, '' ) );
+
+		// The canned responses are exhausted: the panel's fetch fails, the
+		// row degrades, and the unreachable flag is set.
+		$rows = $gateway->get_manual_refund_instructions( $order );
+
+		$this->assertSame( '', $rows[0]['account_number'] );
+		$this->assertSame( WC_BlinkPay_Gateway::PANEL_REQUEST_TIMEOUT, $client->request_timeout, 'Panel reads must fail fast, not hold the order screen for the checkout timeout.' );
+		$this->assertNotFalse( get_transient( WC_BlinkPay_Gateway::PANEL_UNREACHABLE_FLAG ) );
+
+		// While the flag stands, renders skip the API entirely.
+		$fetches = count( $client->get_refund_calls );
+		$rows    = $gateway->get_manual_refund_instructions( $order );
+
+		$this->assertSame( '', $rows[0]['account_number'] );
+		$this->assertCount( $fetches, $client->get_refund_calls, 'An outage must not be re-probed on every order-screen load.' );
+	}
+
 	public function test_marking_a_manual_refund_transferred_discharges_the_obligation() {
 		$order  = $this->register_paid_order( 413, 'source_bank_payment_sent' );
 		$client = new WC_BlinkPay_Fake_API_Client(

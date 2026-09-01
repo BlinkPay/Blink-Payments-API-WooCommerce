@@ -44,6 +44,18 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	// manual verification rather than rescheduling forever.
 	const ORDER_LOCK_MAX_RETRIES = 30;
 
+	// How long a manual-refunds panel read may take, in seconds. The panel
+	// renders inline on the order screen, so it must fail fast rather than
+	// hold the page for the API client's full checkout budget.
+	const PANEL_REQUEST_TIMEOUT = 5;
+
+	// While this transient is set, panel reads skip the API entirely: a
+	// fetch just failed, and retrying on every order-screen load would hold
+	// the page open during exactly the outage that made it fail. Only this
+	// flag is cached — never a response, so no PII touches storage.
+	const PANEL_UNREACHABLE_FLAG = 'wc_blinkpay_refunds_unreachable';
+	const PANEL_UNREACHABLE_TTL  = 120;
+
 	// Deferred WP-Cron checks: tiers of (number of checks, delay in seconds
 	// before each). Bank settlement is asynchronous — a payment initiated in
 	// the evening may not settle until the SBI operating window reopens the
@@ -1597,7 +1609,10 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		}
 
 		$client = $this->get_api_client();
-		$rows   = array();
+		$client->set_request_timeout( self::PANEL_REQUEST_TIMEOUT );
+
+		$rows        = array();
+		$unreachable = (bool) get_transient( self::PANEL_UNREACHABLE_FLAG );
 
 		foreach ( $refunds as $refund ) {
 			if ( ! is_array( $refund ) || empty( $refund['refund_id'] ) ) {
@@ -1613,9 +1628,16 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 				'status'         => '',
 			);
 
-			if ( '' === $row['paid_on'] ) {
+			if ( '' === $row['paid_on'] && ! $unreachable ) {
 				$response = $client->get_refund( $refund['refund_id'] );
-				if ( ! is_wp_error( $response ) ) {
+				if ( is_wp_error( $response ) ) {
+					// One failure means the API is down or slow: stop
+					// fetching now and let the next renders skip it for a
+					// couple of minutes instead of holding the order screen
+					// open during the outage.
+					$unreachable = true;
+					set_transient( self::PANEL_UNREACHABLE_FLAG, 1, self::PANEL_UNREACHABLE_TTL );
+				} else {
 					$row['account_number'] = ! empty( $response['account_number'] ) ? $response['account_number'] : '';
 					$row['status']         = isset( $response['status'] ) ? $response['status'] : '';
 				}
