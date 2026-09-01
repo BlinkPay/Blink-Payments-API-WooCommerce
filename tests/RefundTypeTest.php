@@ -221,13 +221,14 @@ class RefundTypeTest extends TestCase {
 		$this->assertStringContainsString( 'rf-403', $order->notes[0] );
 		$this->assertStringNotContainsString( '01-2345-6789012-00', $order->notes[0] );
 
-		// The panel's source of truth: only the refund ID and amount are
-		// recorded against the order.
+		// The panel's source of truth: only the refund ID, amount and date
+		// are recorded against the order.
 		$this->assertSame(
 			array(
 				array(
 					'refund_id' => 'rf-403',
 					'amount'    => '49.95',
+					'recorded'  => gmdate( 'Y-m-d' ),
 				),
 			),
 			$order->get_meta( '_blinkpay_manual_refunds' )
@@ -394,7 +395,10 @@ class RefundTypeTest extends TestCase {
 				array(
 					'refund_id'      => 'rf-412',
 					'amount'         => '49.95',
+					'recorded'       => gmdate( 'Y-m-d' ),
+					'paid_on'        => '',
 					'account_number' => '01-2345-6789012-00',
+					'status'         => 'completed',
 				),
 			),
 			$rows,
@@ -410,6 +414,43 @@ class RefundTypeTest extends TestCase {
 		// The number was displayed, never stored.
 		$this->assertStringNotContainsString( '01-2345-6789012-00', wp_json_encode( $order->get_meta( '_blinkpay_manual_refunds' ) ) );
 		$this->assertStringNotContainsString( '01-2345-6789012-00', implode( ' ', $order->notes ) );
+	}
+
+	public function test_marking_a_manual_refund_transferred_discharges_the_obligation() {
+		$order  = $this->register_paid_order( 413, 'source_bank_payment_sent' );
+		$client = new WC_BlinkPay_Fake_API_Client(
+			array(),
+			array(),
+			array( array( 'refund_id' => 'rf-413' ) ),
+			array(
+				array(
+					'refund_id'      => 'rf-413',
+					'account_number' => '01-2345-6789012-00',
+				),
+			)
+		);
+
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		$this->assertTrue( $gateway->process_refund( 413, 49.95, '' ) );
+		$this->assertTrue( $gateway->mark_manual_refund_paid( $order, 'rf-413' ) );
+
+		// The discharge is audited on the order.
+		$this->assertStringContainsString( 'rf-413', end( $order->notes ) );
+		$this->assertStringContainsString( 'test-admin', end( $order->notes ) );
+
+		// A discharged obligation renders as history and triggers no fetch.
+		$fetches_before = count( $client->get_refund_calls );
+		$rows           = $gateway->get_manual_refund_instructions( $order );
+
+		$this->assertSame( gmdate( 'Y-m-d' ), $rows[0]['paid_on'] );
+		$this->assertSame( '', $rows[0]['account_number'] );
+		$this->assertCount( $fetches_before, $client->get_refund_calls, 'History needs no live account number: a discharged row must not call the API.' );
+
+		// Marking is idempotent: a second mark changes nothing.
+		$notes_before = count( $order->notes );
+		$this->assertFalse( $gateway->mark_manual_refund_paid( $order, 'rf-413' ) );
+		$this->assertCount( $notes_before, $order->notes );
 	}
 
 	public function test_an_account_number_refund_reported_failed_rejects_the_woocommerce_refund() {

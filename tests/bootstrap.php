@@ -165,6 +165,13 @@ function wp_next_scheduled( $hook, $args = array() ) {
 	return false;
 }
 
+function wp_get_current_user() {
+	return (object) array(
+		'ID'         => 1,
+		'user_login' => 'test-admin',
+	);
+}
+
 function is_wp_error( $thing ) {
 	return $thing instanceof WP_Error;
 }
@@ -550,6 +557,9 @@ class WC_BlinkPay_Fake_API_Client {
 	/** @var array[] Refund payloads sent, in order. */
 	public $refund_calls = array();
 
+	/** @var string[] Refund IDs retrieved, in order. */
+	public $get_refund_calls = array();
+
 	/** @var string[]|null The canned granted scopes; null means unknown. */
 	public $granted_scopes = null;
 
@@ -616,6 +626,8 @@ class WC_BlinkPay_Fake_API_Client {
 	}
 
 	public function get_refund( $refund_id ) {
+		$this->get_refund_calls[] = $refund_id;
+
 		if ( ! $this->get_refund_responses ) {
 			return new WP_Error( 'blinkpay_test', 'No canned refund retrieval response.' );
 		}

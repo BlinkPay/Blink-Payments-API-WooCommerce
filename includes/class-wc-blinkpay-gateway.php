@@ -1525,6 +1525,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 		$refunds[] = array(
 			'refund_id' => $refund_id,
 			'amount'    => $this->format_amount( $amount ),
+			'recorded'  => gmdate( 'Y-m-d' ),
 		);
 
 		$order->update_meta_data( '_blinkpay_manual_refunds', $refunds );
@@ -1532,14 +1533,62 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	}
 
 	/**
+	 * Marks one outstanding manual-refund obligation as transferred, with an
+	 * audit note naming who recorded it, so the panel stops instructing a
+	 * payment that has already been made — the panel's standing imperative
+	 * was itself a double-refund vector once the transfer happened.
+	 * Idempotent: an obligation already marked, or an unknown refund ID,
+	 * changes nothing.
+	 *
+	 * @param WC_Order $order     The order.
+	 * @param string   $refund_id The refund whose transfer has been made.
+	 * @return bool Whether an outstanding obligation was marked.
+	 */
+	public function mark_manual_refund_paid( $order, $refund_id ) {
+		$refunds = $order->get_meta( '_blinkpay_manual_refunds' );
+		if ( ! is_array( $refunds ) ) {
+			return false;
+		}
+
+		foreach ( $refunds as $index => $refund ) {
+			if ( ! is_array( $refund ) || ! isset( $refund['refund_id'] ) || $refund['refund_id'] !== $refund_id || ! empty( $refund['paid_on'] ) ) {
+				continue;
+			}
+
+			$refunds[ $index ]['paid_on'] = gmdate( 'Y-m-d' );
+			$order->update_meta_data( '_blinkpay_manual_refunds', $refunds );
+			$order->save();
+
+			$user = wp_get_current_user();
+			$order->add_order_note(
+				sprintf(
+					/* translators: 1: refund ID, 2: amount, 3: user login */
+					__( 'BlinkPay manual refund %1$s of NZD %2$s marked as transferred by %3$s.', 'blinkpay-nz-for-woocommerce' ),
+					$refund_id,
+					isset( $refund['amount'] ) ? $refund['amount'] : '',
+					$user && ! empty( $user->user_login ) ? $user->user_login : __( 'an unknown user', 'blinkpay-nz-for-woocommerce' )
+				)
+			);
+
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
 	 * The rows for the order screen's manual-refunds panel: one per
-	 * account_number refund, with the customer's account number fetched live
-	 * from the API — displayed to the merchant, never stored. An unreachable
-	 * API or a still-processing refund yields an empty account number, and
-	 * the panel defers to the merchant portal for that row.
+	 * account_number refund. An outstanding obligation carries the customer's
+	 * account number and the refund's status, fetched live from the API —
+	 * displayed to the merchant, never stored — while a discharged one is
+	 * history and triggers no fetch at all. An unreachable API or a
+	 * still-processing refund yields an empty account number, and the panel
+	 * defers to the merchant portal for that row.
 	 *
 	 * @param WC_Order $order The order.
-	 * @return array[] Rows of refund_id, amount and account_number ('' while unavailable).
+	 * @return array[] Rows of refund_id, amount, recorded, paid_on ('' while
+	 *                 outstanding), account_number and status ('' while
+	 *                 unavailable or discharged).
 	 */
 	public function get_manual_refund_instructions( $order ) {
 		$refunds = $order->get_meta( '_blinkpay_manual_refunds' );
@@ -1555,13 +1604,24 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 				continue;
 			}
 
-			$response = $client->get_refund( $refund['refund_id'] );
-
-			$rows[] = array(
+			$row = array(
 				'refund_id'      => $refund['refund_id'],
 				'amount'         => isset( $refund['amount'] ) ? $refund['amount'] : '',
-				'account_number' => ! is_wp_error( $response ) && ! empty( $response['account_number'] ) ? $response['account_number'] : '',
+				'recorded'       => isset( $refund['recorded'] ) ? $refund['recorded'] : '',
+				'paid_on'        => isset( $refund['paid_on'] ) ? $refund['paid_on'] : '',
+				'account_number' => '',
+				'status'         => '',
 			);
+
+			if ( '' === $row['paid_on'] ) {
+				$response = $client->get_refund( $refund['refund_id'] );
+				if ( ! is_wp_error( $response ) ) {
+					$row['account_number'] = ! empty( $response['account_number'] ) ? $response['account_number'] : '';
+					$row['status']         = isset( $response['status'] ) ? $response['status'] : '';
+				}
+			}
+
+			$rows[] = $row;
 		}
 
 		return $rows;
@@ -1586,6 +1646,19 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 
 		foreach ( $rows as $row ) {
 			echo '<p>';
+
+			if ( '' !== $row['paid_on'] ) {
+				printf(
+					/* translators: 1: date, 2: amount, 3: refund ID */
+					esc_html__( 'Transferred on %1$s: NZD %2$s, refund reference %3$s.', 'blinkpay-nz-for-woocommerce' ),
+					esc_html( $row['paid_on'] ),
+					esc_html( $row['amount'] ),
+					esc_html( $row['refund_id'] )
+				);
+				echo '</p>';
+				continue;
+			}
+
 			if ( '' !== $row['account_number'] ) {
 				printf(
 					/* translators: 1: amount, 2: bank account number */
@@ -1602,12 +1675,36 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			}
 			echo '<br />';
 			printf(
-				/* translators: %s: refund ID */
-				esc_html__( 'BlinkPay refund reference: %s', 'blinkpay-nz-for-woocommerce' ),
-				esc_html( $row['refund_id'] )
+				/* translators: 1: refund ID, 2: date requested, 3: refund status or empty */
+				esc_html__( 'BlinkPay refund reference: %1$s (requested %2$s%3$s).', 'blinkpay-nz-for-woocommerce' ),
+				esc_html( $row['refund_id'] ),
+				esc_html( $row['recorded'] ),
+				esc_html( '' !== $row['status'] ? ', ' . $row['status'] : '' )
 			);
 			echo '</p>';
+
+			$this->render_mark_refund_paid_form( $order, $row['refund_id'] );
 		}
+	}
+
+	/**
+	 * Renders the "Mark as transferred" form for one outstanding obligation.
+	 * It posts to admin-post.php, where the handler enforces a nonce and the
+	 * edit_shop_orders capability before stamping the obligation discharged —
+	 * once marked, the panel renders it as history instead of instructing
+	 * the same transfer again.
+	 *
+	 * @param WC_Order $order     The order.
+	 * @param string   $refund_id The refund the form discharges.
+	 */
+	private function render_mark_refund_paid_form( $order, $refund_id ) {
+		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
+		echo '<input type="hidden" name="action" value="wc_blinkpay_mark_refund_paid" />';
+		echo '<input type="hidden" name="order_id" value="' . esc_attr( (string) $order->get_id() ) . '" />';
+		echo '<input type="hidden" name="refund_id" value="' . esc_attr( $refund_id ) . '" />';
+		wp_nonce_field( 'wc_blinkpay_mark_refund_paid' );
+		echo '<button type="submit" class="button">' . esc_html__( 'Mark as transferred', 'blinkpay-nz-for-woocommerce' ) . '</button>';
+		echo '</form>';
 	}
 
 	/**

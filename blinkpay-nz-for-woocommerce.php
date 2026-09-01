@@ -111,6 +111,34 @@ function wc_blinkpay_init() {
 	// — visible to the merchant on the order screen, never stored in
 	// WordPress.
 	add_action( 'add_meta_boxes', 'wc_blinkpay_register_manual_refunds_panel', 10, 2 );
+	add_action( 'admin_post_wc_blinkpay_mark_refund_paid', 'wc_blinkpay_handle_mark_refund_paid' );
+}
+
+/**
+ * Handles the manual-refunds panel's "Mark as transferred" action: stamps the
+ * obligation as discharged with an audit note, then returns to the order
+ * screen. Without a completion state the panel would instruct the same bank
+ * transfer forever — a double-refund invitation to whoever opens the order
+ * next.
+ */
+function wc_blinkpay_handle_mark_refund_paid() {
+	if ( ! current_user_can( 'edit_shop_orders' ) ) {
+		wp_die( esc_html__( 'You are not allowed to manage BlinkPay refunds.', 'blinkpay-nz-for-woocommerce' ), '', 403 );
+	}
+	check_admin_referer( 'wc_blinkpay_mark_refund_paid' );
+
+	$order_id  = isset( $_POST['order_id'] ) ? absint( $_POST['order_id'] ) : 0;
+	$refund_id = isset( $_POST['refund_id'] ) ? sanitize_text_field( wp_unslash( $_POST['refund_id'] ) ) : '';
+
+	$order   = $order_id ? wc_get_order( $order_id ) : false;
+	$gateway = wc_blinkpay_gateway();
+
+	if ( $order && $gateway && 'blinkpay' === $order->get_payment_method() && '' !== $refund_id ) {
+		$gateway->mark_manual_refund_paid( $order, $refund_id );
+	}
+
+	wp_safe_redirect( $order ? $order->get_edit_order_url() : admin_url( 'edit.php?post_type=shop_order' ) );
+	exit;
 }
 
 /**
