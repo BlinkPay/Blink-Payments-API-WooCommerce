@@ -1,11 +1,15 @@
 # BlinkPay NZ for WooCommerce
+[![CI](https://github.com/BlinkPay/Blink-Payments-API-WooCommerce/actions/workflows/build.yml/badge.svg)](https://github.com/BlinkPay/Blink-Payments-API-WooCommerce/actions/workflows/build.yml)
+[![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=blinkpay-nz-for-woocommerce&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=blinkpay-nz-for-woocommerce)
+[![Vulnerabilities](https://sonarcloud.io/api/project_badges/measure?project=blinkpay-nz-for-woocommerce&metric=vulnerabilities)](https://sonarcloud.io/summary/new_code?id=blinkpay-nz-for-woocommerce)
+[![Snyk security](https://img.shields.io/badge/Snyk_security-monitored-9043C6)](https://app.snyk.io/org/blinkpay-zw9/project/28d2d784-5631-4a01-913f-41cf9aeb7c1b)
 
 Accept New Zealand bank payments in WooCommerce through [BlinkPay](https://www.blinkpay.co.nz) open banking:
 
 - **Blink PayNow** — one-off payments at checkout, via quick payments.
-- **Refunds** — refund requests from the WooCommerce order screen retrieve the customer's account number for a manual bank transfer.
+- **Refunds** — card payments are refunded through the card network in full or in part; bank payments show the customer's account number on the order screen (fetched live, never stored) for a manual bank transfer.
 
-Customers are sent to BlinkPay's hosted gateway, choose their bank, and authorise the payment in their own online banking. No card details, no card fees.
+Customers are sent to BlinkPay's hosted gateway, choose their bank — or card, when card payments are enabled for the BlinkPay merchant account — and authorise the payment. Card is where BlinkPay surcharging applies.
 
 ## Requirements
 
@@ -21,8 +25,9 @@ Customers are sent to BlinkPay's hosted gateway, choose their bank, and authoris
 2. In WordPress admin, go to **Plugins → Add New → Upload Plugin**, upload the ZIP and activate it.
 3. Go to **WooCommerce → Settings → Payments → BlinkPay**.
 4. Enter your **client ID** and **client secret**, leave **Sandbox mode** ticked, and enable the gateway.
-5. Place a test order. Sandbox payments never move real money.
-6. When you are ready to go live, replace the credentials with your production pair and untick **Sandbox mode**.
+5. Copy the **Callback URL** shown in the settings and register it in the BlinkPay client portal under **Settings → API** for the **sandbox** environment. Redirect URIs must be whitelisted before payments can be created, and each environment keeps its own whitelist.
+6. Place a test order. Sandbox payments never move real money.
+7. When you are ready to go live, replace the credentials with your production pair, untick **Sandbox mode**, and register the callback URL for the **production** environment.
 
 ### Keeping the client secret out of the database (recommended)
 
@@ -40,9 +45,15 @@ define( 'BLINKPAY_CLIENT_SECRET', 'your-client-secret' );
 1. At checkout the plugin creates a **quick payment** with the gateway flow and redirects the customer to BlinkPay's hosted gateway.
 2. The customer picks their bank and authorises the payment.
 3. Back on your site, the plugin retrieves the quick payment — the first retrieval is what initiates the debit — and polls briefly for the outcome.
-4. `AcceptedSettlementCompleted` marks the order **Processing/Completed**; a rejected consent or payment marks it **Failed**; anything still in flight parks the order **On hold** and WP-Cron re-checks every minute for up to 30 minutes.
+4. `AcceptedSettlementCompleted` marks the order **Processing/Completed**; a rejected consent or payment marks it **Failed**; anything still in flight parks the order **On hold** and WP-Cron re-checks it — every minute at first, backing off to every 2 hours — for up to 36 hours, so a payment that settles overnight completes automatically.
 
 The return redirect alone is never treated as proof of payment — the outcome is always confirmed through the API, as the gateway contract requires.
+
+Orders still awaiting an outcome are protected from WooCommerce's unpaid-order cancellation (`wc_cancel_unpaid_orders()`), whose default 60-minute stock-hold window is narrower than the check schedule: the first unresolved deferred check parks the order **On hold**, and the `woocommerce_cancel_unpaid_order` filter keeps the sweep off orders whose checks remain. Should a payment still settle after its order was cancelled — an admin cancelling manually, say — the order is parked **On hold** with a prominent note rather than the payment being discarded silently.
+
+A retried checkout — the order-pay link stays live while an order is pending — confirms the order's existing quick payment through the API before creating anything: a live or settling debit blocks a second creation, a settled one completes the order, and a fresh quick payment is only created once the previous attempt is confirmed terminal with no money moved.
+
+Before completing, the paid amount is verified against the order total — the quick payment payload is filterable by third-party code, so the gateway checks what it was actually paid. A completed payment whose amount differs from the order total in either direction parks the order **On hold** with a note naming both amounts (flagged once, not per poll). What the customer was actually charged is recorded on the order: with surcharging enabled for the merchant account, Blink adds the surcharge on the hosted gateway (the customer sees and authorises the combined amount there), and the plugin stores `total_charge` and `surcharge` as metadata with a reconciliation note.
 
 ### Access tokens
 
@@ -50,7 +61,13 @@ The plugin requests an OAuth2 `client_credentials` token, caches it in a transie
 
 ### Refunds
 
-Refunding from the order screen uses BlinkPay's `account_number` refund type, which **does not move money**. It retrieves the bank account number the customer paid from and records it as an order note; you then transfer the refund to that account from your own bank. The WooCommerce refund is the record of that manual transfer, and the note carries the BlinkPay refund reference.
+How the payment settled — its `accepted_reason`, recorded when the payment completes — decides the refund path.
+
+A card payment (`card_network_accepted`) is refunded with a money-moving type — `full_refund` when the whole order total is refunded and no surcharge was recorded, `partial_refund` (carrying the exact amount) otherwise — and both carry the configured PCR. The refunds API accepts no idempotency key, so refunds run under the plugin's per-order lock and a second submission is refused while one is in flight. A `201` from the refunds API does not mean the money has moved, so the plugin retrieves the refund and acts on its status: `failed` rejects the WooCommerce refund outright, `completed` is recorded as done, and anything else is noted with what the merchant must still do — authorise the refund from their own bank when the response carries a `consent_redirect`, or verify it completes in the merchant portal.
+
+A bank payment (`source_bank_payment_sent`, or an order from before the reason was recorded) uses the `account_number` refund type, which **does not move money**. The bank account number the customer paid from is shown in the **BlinkPay manual refunds** panel on the order screen so you can transfer the refund from your own bank — the panel fetches the number live from the BlinkPay API each time it renders, so the number is displayed but deliberately never stored in WordPress (it is also available in the BlinkPay merchant portal). The private order note carries the refund reference and points at the panel, and a customer-visible note says the refund will arrive by bank transfer, so the outstanding obligation is not buried in a private note.
+
+WooCommerce's own **Refund manually** button is hidden on BlinkPay orders and, more to the point, a manual money-carrying refund is rejected server-side — it would record money as returned without BlinkPay involvement — so every refund goes through **Refund via BlinkPay** (zero-amount restock-only corrections are still allowed). Refund support is advertised from the scopes in the last token grant (`create:refund` and `view:refund`, retained in a hashed `wc_blinkpay_scopes_*` option), so merchants whose credentials lack them never see a Refund button they cannot use; while the grant is unknown the button is offered, and a 403 names the missing permissions.
 
 ## Order metadata reference
 
@@ -58,7 +75,15 @@ Refunding from the order screen uses BlinkPay's `account_number` refund type, wh
 |---|---|
 | `_blinkpay_quick_payment_id` | Quick payment ID for the order |
 | `_blinkpay_payment_id` | BlinkPay payment ID (also set as the order's transaction ID) |
-| `_blinkpay_idempotency_*` | Idempotency keys, one per API operation per order |
+| `_blinkpay_accepted_reason` | How the payment settled (`source_bank_payment_sent` or `card_network_accepted`); selects the refund path |
+| `_blinkpay_total_charge` | The amount actually charged to the customer (`total_charge`, order total plus any surcharge) |
+| `_blinkpay_surcharge` | The surcharge Blink applied on the hosted gateway, when there was one |
+| `_blinkpay_amount_mismatch_flagged` | Set when a completed payment reported an amount that differs from the order total — or reported none — so the flag is noted once |
+| `_blinkpay_settled_after_cancellation` | Set when the payment settled after the order had already been cancelled, so the warning is raised once and the parked order stays parked |
+| `_blinkpay_status_checks` | How many deferred status checks have run; spaces the polling schedule and ends it after 36 hours |
+| `_blinkpay_lock_retries` | Consecutive deferred checks that found the order locked by another operation; cleared by any check that runs |
+| `_blinkpay_manual_refunds` | The account-number refunds owed by manual bank transfer (refund ID and amount only — the account number is fetched live, never stored) |
+| `_blinkpay_idempotency_*` | Idempotency keys, scoped to the current payment attempt and discarded once bound to a payment |
 
 ## Extensibility
 
@@ -68,14 +93,15 @@ Refunding from the order screen uses BlinkPay's `account_number` refund type, wh
 ## Troubleshooting
 
 - **The gateway does not appear at checkout** — check the store currency is NZD and both credentials are set.
-- **Orders stay on hold** — the payment outcome was still pending; WP-Cron re-checks it for 30 minutes. If your host disables WP-Cron, trigger it from a real cron job. After the checks are exhausted, verify the payment in the BlinkPay merchant portal and update the order manually.
+- **Every payment fails with "We could not start your BlinkPay payment"** — the site's callback URL is probably not whitelisted. Copy the **Callback URL** from the gateway settings and register it in the BlinkPay client portal under **Settings → API** for the environment in use; sandbox and production each keep their own whitelist. The notes on the failed order name the exact error.
+- **Orders stay on hold** — bank settlement is asynchronous, and an evening payment may not settle until the following morning; WP-Cron re-checks it on a backing-off schedule for up to 36 hours and completes the order automatically once the payment settles. If your host disables WP-Cron, trigger it from a real cron job. Only if the checks are exhausted after 36 hours should you verify the payment in the BlinkPay merchant portal and update the order manually.
 - **Debug logging** — enable it in the gateway settings, then read **WooCommerce → Status → Logs** (source `blinkpay`). Credentials and tokens are never written to the log.
 
 ## Security notes
 
 - The client secret is stored in the WordPress options table unless you use the `wp-config.php` constants above.
-- The plugin never stores bank account details for payments; the customer authorises directly with their bank. A refund records the customer's account number in a private order note so you can make the transfer.
-- The customer identifier sent to BlinkPay is a SHA-256 hash of the billing email, never the raw address.
+- The plugin never stores bank account details; the customer authorises directly with their bank, and an account-number refund shows the customer's account number on the order screen by fetching it live from the BlinkPay API rather than copying it into WordPress, so it never lands in order notes, exports or database backups.
+- The customer identifier sent to BlinkPay is a SHA-256 hash — of the WooCommerce customer ID for registered customers, of the billing email for guests, and omitted entirely when neither exists. Hashing keeps the raw value out of the request, but it is not anonymisation: a hash of a known email address can be matched back to that address.
 
 ## Development
 
@@ -88,19 +114,30 @@ npx @wordpress/env start    # http://localhost:8888, admin / password
 npx @wordpress/env stop     # `destroy` also wipes the database
 ```
 
+### Unit tests
+
+The PHPUnit suite in `tests/` runs against WordPress stubs, so it needs no WordPress installation — only PHP 7.4+ and Composer (on macOS: `brew install php composer`), or Docker:
+
+```sh
+composer install && composer test
+
+# or without a local PHP:
+docker run --rm -v "$PWD":/app -w /app composer:2 sh -c "composer install && composer test"
+```
+
 ### Plugin Check
 
 [Plugin Check](https://wordpress.org/plugins/plugin-check/) is the tool the WordPress.org review team runs against submissions. Run it before every release:
 
 ```sh
-npx @wordpress/env run cli wp plugin check Blink-Payments-API-WooCommerce --slug=blinkpay-nz-for-woocommerce --exclude-directories=.github,.idea --exclude-files=.gitignore,.wp-env.json
+npx @wordpress/env run cli wp plugin check Blink-Payments-API-WooCommerce --slug=blinkpay-nz-for-woocommerce --exclude-directories=.github,.idea,tests,vendor --exclude-files=.gitignore,.wp-env.json,composer.json,composer.lock,phpunit.xml.dist,.phpunit.result.cache
 ```
 
 `--slug` is required because wp-env mounts the plugin under the repository's directory name; without it every translated string is reported as a text-domain mismatch. The excludes skip files that exist only in the repository — CI leaves them out of the plugin zip. A clean run prints `Success: Checks complete. No errors found.`
 
 ### Releasing
 
-CI lints every PHP file on PHP 7.4–8.4 and builds `blinkpay-nz-for-woocommerce.zip` on every push. Pushing a bare semver tag also attaches the zip to a GitHub release:
+CI lints every PHP file on PHP 7.4–8.4, runs the unit tests on PHP 7.4 and 8.4, and builds `blinkpay-nz-for-woocommerce.zip` on every push. Pushing a bare semver tag also attaches the zip to a GitHub release:
 
 1. Bump `Version` and `WC tested up to` in `blinkpay-nz-for-woocommerce.php`, `WC_BLINKPAY_VERSION` in the same file, and `Stable tag`, `Tested up to` and the changelog in `readme.txt`. `Version`, `WC_BLINKPAY_VERSION`, `Stable tag` and the git tag must all carry the same version number — WordPress serves the zip named by `Stable tag`, `WC_BLINKPAY_VERSION` cache-busts the enqueued scripts, and the tag names the GitHub release, so a mismatch ships stale code or assets.
 2. Run Plugin Check and place a sandbox test order.

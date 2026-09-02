@@ -1,0 +1,19 @@
+{
+    "name": "blinkpay/blinkpay-nz-for-woocommerce",
+    "description": "Accept New Zealand bank payments through BlinkPay open banking with Blink PayNow one-off payments.",
+    "license": "MIT",
+    "require": {
+        "php": ">=7.4"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.6"
+    },
+    "config": {
+        "platform": {
+            "php": "7.4.0"
+        }
+    },
+    "scripts": {
+        "test": "phpunit"
+    }
+}

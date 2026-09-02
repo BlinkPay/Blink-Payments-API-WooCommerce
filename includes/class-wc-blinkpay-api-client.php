@@ -24,6 +24,8 @@ class WC_BlinkPay_API_Client {
 
 	const REQUEST_TIMEOUT = 30;
 
+	const MEDIA_TYPE_JSON = 'application/json';
+
 	/** @var string */
 	private $client_id;
 
@@ -36,6 +38,9 @@ class WC_BlinkPay_API_Client {
 	/** @var bool */
 	private $debug;
 
+	/** @var int */
+	private $request_timeout = self::REQUEST_TIMEOUT;
+
 	/**
 	 * @param string $client_id     The BlinkPay client ID.
 	 * @param string $client_secret The BlinkPay client secret.
@@ -47,6 +52,18 @@ class WC_BlinkPay_API_Client {
 		$this->client_secret = trim( (string) $client_secret );
 		$this->sandbox       = (bool) $sandbox;
 		$this->debug         = (bool) $debug;
+	}
+
+	/**
+	 * Overrides the request timeout for this client instance, covering the
+	 * token fetch too. The default suits checkout and cron, where correctness
+	 * beats latency; an admin screen rendering inline must fail fast instead
+	 * of holding the page open for the full budget.
+	 *
+	 * @param int $seconds The timeout in seconds.
+	 */
+	public function set_request_timeout( $seconds ) {
+		$this->request_timeout = max( 1, (int) $seconds );
 	}
 
 	/**
@@ -76,6 +93,30 @@ class WC_BlinkPay_API_Client {
 	}
 
 	/**
+	 * Option key holding the scopes last granted to this client, scoped like
+	 * the token cache. An option rather than a transient, so the grant is
+	 * still known after the token itself has expired.
+	 *
+	 * @return string
+	 */
+	private function scope_cache_key() {
+		return 'wc_blinkpay_scopes_' . hash( 'sha256', ( $this->sandbox ? 'sandbox' : 'production' ) . '|' . $this->client_id );
+	}
+
+	/**
+	 * The scopes granted at the last token fetch, or null when they are
+	 * unknown — no token has been fetched yet, or the token response carried
+	 * no scope. Reads only the cache; never makes a request.
+	 *
+	 * @return string[]|null
+	 */
+	public function get_granted_scopes() {
+		$scope = get_option( $this->scope_cache_key(), '' );
+
+		return is_string( $scope ) && '' !== $scope ? preg_split( '/\s+/', trim( $scope ) ) : null;
+	}
+
+	/**
 	 * Returns a cached access token, fetching a new one when missing or forced.
 	 *
 	 * @param bool $force_refresh Discard any cached token first.
@@ -98,21 +139,26 @@ class WC_BlinkPay_API_Client {
 			}
 		}
 
+		// The documented token contract is OAuth 2.0 form encoding. The server
+		// happens to accept a JSON body too, but that is undocumented
+		// behaviour a hardening change could withdraw without notice.
 		$response = wp_remote_post(
 			$this->base_url() . '/oauth2/token',
 			array(
 				'headers' => array(
-					'Content-Type' => 'application/json',
-					'Accept'       => 'application/json',
+					'Content-Type' => 'application/x-www-form-urlencoded',
+					'Accept'       => self::MEDIA_TYPE_JSON,
 				),
-				'body'    => wp_json_encode(
+				'body'    => http_build_query(
 					array(
 						'grant_type'    => 'client_credentials',
 						'client_id'     => $this->client_id,
 						'client_secret' => $this->client_secret,
-					)
+					),
+					'',
+					'&'
 				),
-				'timeout' => self::REQUEST_TIMEOUT,
+				'timeout' => $this->request_timeout,
 			)
 		);
 
@@ -134,6 +180,14 @@ class WC_BlinkPay_API_Client {
 
 		$expires_in = isset( $body['expires_in'] ) ? (int) $body['expires_in'] : 3600;
 		set_transient( $this->token_cache_key(), $body['access_token'], max( 60, $expires_in - self::TOKEN_EXPIRY_BUFFER ) );
+
+		// The granted scope decides which features (refunds) are offered, so
+		// it is retained beyond the token's own lifetime.
+		if ( isset( $body['scope'] ) && is_string( $body['scope'] ) && '' !== $body['scope'] ) {
+			update_option( $this->scope_cache_key(), $body['scope'], false );
+		} else {
+			delete_option( $this->scope_cache_key() );
+		}
 
 		return $body['access_token'];
 	}
@@ -196,18 +250,18 @@ class WC_BlinkPay_API_Client {
 
 		$args = array(
 			'method'  => $method,
-			'timeout' => self::REQUEST_TIMEOUT,
+			'timeout' => $this->request_timeout,
 			'headers' => array_merge(
 				array(
 					'Authorization' => 'Bearer ' . $token,
-					'Accept'        => 'application/json',
+					'Accept'        => self::MEDIA_TYPE_JSON,
 				),
 				array_filter( $headers )
 			),
 		);
 
 		if ( null !== $body ) {
-			$args['headers']['Content-Type'] = 'application/json';
+			$args['headers']['Content-Type'] = self::MEDIA_TYPE_JSON;
 			$args['body']                    = wp_json_encode( $body );
 		}
 
