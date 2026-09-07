@@ -144,3 +144,32 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: blinkpay-nz-for-woocommerce.zip
+
+  wordpress-org:
+    # Publishes the tagged release to the WordPress.org plugin directory. SVN
+    # there is a release repository — every commit rebuilds every version's
+    # zip — so this runs once per tag and never from master.
+    if: github.ref_type == 'tag'
+    needs: [ package, plugin-check ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # WordPress.org serves whatever Stable tag names, so a header that does
+      # not match the git tag ships the wrong build to every site.
+      - name: Check the version headers match the tag
+        run: |
+          for header in "Version: $GITHUB_REF_NAME" "WC_BLINKPAY_VERSION', '$GITHUB_REF_NAME'"; do
+            grep -qF -- "$header" blinkpay-nz-for-woocommerce.php || { echo "::error::blinkpay-nz-for-woocommerce.php does not contain \"$header\""; exit 1; }
+          done
+          grep -qxF -- "Stable tag: $GITHUB_REF_NAME" readme.txt || { echo "::error::readme.txt Stable tag is not $GITHUB_REF_NAME"; exit 1; }
+      - name: Build plugin directory
+        run: .github/build-plugin.sh
+      - name: Deploy to WordPress.org
+        uses: 10up/action-wordpress-plugin-deploy@54bd289b8525fd23a5c365ec369185f2966529c2 # 2.3.0 — pinned by SHA: a moving tag could be repointed at malicious code
+        env:
+          # The action derives the slug from the repository name, which differs
+          # from the plugin's directory slug.
+          SLUG: blinkpay-nz-for-woocommerce
+          BUILD_DIR: build/blinkpay-nz-for-woocommerce
+          SVN_USERNAME: ${{ secrets.SVN_USERNAME }}
+          SVN_PASSWORD: ${{ secrets.SVN_PASSWORD }}

@@ -130,18 +130,20 @@ docker run --rm -v "$PWD":/app -w /app composer:2 sh -c "composer install && com
 [Plugin Check](https://wordpress.org/plugins/plugin-check/) is the tool the WordPress.org review team runs against submissions. Run it before every release:
 
 ```sh
-npx @wordpress/env run cli wp plugin check Blink-Payments-API-WooCommerce --slug=blinkpay-nz-for-woocommerce --exclude-directories=.github,.idea,tests,vendor --exclude-files=.gitignore,.wp-env.json,composer.json,composer.lock,phpunit.xml.dist,.phpunit.result.cache
+npx @wordpress/env run cli wp plugin check Blink-Payments-API-WooCommerce --slug=blinkpay-nz-for-woocommerce --exclude-directories=.github,.idea,.wordpress-org,tests,vendor --exclude-files=.gitignore,.wp-env.json,composer.json,composer.lock,phpunit.xml.dist,.phpunit.result.cache
 ```
 
 `--slug` is required because wp-env mounts the plugin under the repository's directory name; without it every translated string is reported as a text-domain mismatch. The excludes skip files that exist only in the repository — CI leaves them out of the plugin zip. A clean run prints `Success: Checks complete. No errors found.`
 
 ### Releasing
 
-CI lints every PHP file on PHP 7.4–8.4, runs the unit tests on PHP 7.4 and 8.4, and builds `blinkpay-nz-for-woocommerce.zip` on every push. Pushing a bare semver tag also attaches the zip to a GitHub release:
+CI lints every PHP file on PHP 7.4–8.4, runs the unit tests on PHP 7.4 and 8.4, and builds `blinkpay-nz-for-woocommerce.zip` on every push. Pushing a bare semver tag also attaches the zip to a GitHub release and publishes the same build to the [WordPress.org plugin directory](https://wordpress.org/plugins/blinkpay-nz-for-woocommerce/):
 
 1. Bump `Version` and `WC tested up to` in `blinkpay-nz-for-woocommerce.php`, `WC_BLINKPAY_VERSION` in the same file, and `Stable tag`, `Tested up to` and the changelog in `readme.txt`. `Version`, `WC_BLINKPAY_VERSION`, `Stable tag` and the git tag must all carry the same version number — WordPress serves the zip named by `Stable tag`, `WC_BLINKPAY_VERSION` cache-busts the enqueued scripts, and the tag names the GitHub release, so a mismatch ships stale code or assets.
 2. Run Plugin Check and place a sandbox test order.
-3. `git tag -a 1.1.0 -m "1.1.0" && git push origin 1.1.0`
+3. `git tag -a 1.1.1 -m "1.1.1" && git push origin 1.1.1`
+
+The WordPress.org step checks out `https://plugins.svn.wordpress.org/blinkpay-nz-for-woocommerce/`, replaces `trunk` with the built plugin directory, copies `.wordpress-org/` (banner and icon) to `assets`, tags the version and commits once. It refuses to run if `Version`, `WC_BLINKPAY_VERSION` or `Stable tag` disagree with the git tag. It authenticates with the `SVN_USERNAME` and `SVN_PASSWORD` repository secrets — the WordPress.org account that owns the plugin and a dedicated SVN password generated in that account's settings, never the login password. Every SVN commit rebuilds every version's zip on WordPress.org, so releases go through this step only; never commit to SVN by hand between releases.
 
 ## Licence
 
