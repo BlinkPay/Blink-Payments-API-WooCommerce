@@ -7,4 +7,4 @@ set -eu
 cd "$(dirname "$0")/.."
 
 mkdir -p build/blinkpay-nz-for-woocommerce
-rsync -a --exclude='.git' --exclude='.claude' --exclude='.github' --exclude='.gitignore' --exclude='.phpunit.result.cache' --exclude='.wp-env.json' --exclude='build' --exclude='composer.json' --exclude='composer.lock' --exclude='phpunit.xml.dist' --exclude='tests' --exclude='vendor' ./ build/blinkpay-nz-for-woocommerce/
+rsync -a --exclude='.git' --exclude='.claude' --exclude='.github' --exclude='.gitignore' --exclude='.phpunit.result.cache' --exclude='.wp-env.json' --exclude='.wordpress-org' --exclude='build' --exclude='composer.json' --exclude='composer.lock' --exclude='phpunit.xml.dist' --exclude='tests' --exclude='vendor' ./ build/blinkpay-nz-for-woocommerce/
