@@ -4,7 +4,7 @@ Tags: woocommerce, payment gateway, open banking, new zealand, bank payments
 Requires at least: 6.0
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.1.1
+Stable tag: 1.1.2
 License: MIT
 License URI: https://opensource.org/licenses/MIT
 
@@ -102,6 +102,9 @@ Yes. The `wc_blinkpay_quick_payment_payload` filter modifies the quick payment r
 
 == Changelog ==
 
+= 1.1.2 =
+* Pin every build-pipeline dependency to an exact commit and stop the checkout persisting its token, resolving the pipeline findings raised by our security scanner. No functional changes.
+
 = 1.1.1 =
 * First release on the WordPress.org plugin directory. No functional changes.
 
@@ -143,6 +146,9 @@ Yes. The `wc_blinkpay_quick_payment_payload` filter modifies the quick payment r
 * Initial release: Blink PayNow quick payments, account-number refunds, classic and block checkout support, HPOS compatibility.
 
 == Upgrade Notice ==
+
+= 1.1.2 =
+Build pipeline hardening only; no changes to the plugin's behaviour.
 
 = 1.1.1 =
 Now distributed through the WordPress.org plugin directory; future updates arrive through the WordPress updater.
