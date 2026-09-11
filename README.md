@@ -1,8 +1,10 @@
+![BlinkPay](https://raw.githubusercontent.com/BlinkPay/Blink-Payments-API-WooCommerce/master/.wordpress-org/banner-1544x500.png)
+
 # BlinkPay NZ for WooCommerce
 [![CI](https://github.com/BlinkPay/Blink-Payments-API-WooCommerce/actions/workflows/build.yml/badge.svg)](https://github.com/BlinkPay/Blink-Payments-API-WooCommerce/actions/workflows/build.yml)
 [![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=blinkpay-nz-for-woocommerce&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=blinkpay-nz-for-woocommerce)
 [![Vulnerabilities](https://sonarcloud.io/api/project_badges/measure?project=blinkpay-nz-for-woocommerce&metric=vulnerabilities)](https://sonarcloud.io/summary/new_code?id=blinkpay-nz-for-woocommerce)
-[![Snyk security](https://img.shields.io/badge/Snyk_security-monitored-9043C6)](https://app.snyk.io/org/blinkpay-zw9/project/28d2d784-5631-4a01-913f-41cf9aeb7c1b)
+[![Snyk security](https://snyk.io/test/github/BlinkPay/Blink-Payments-API-WooCommerce/badge.svg)](https://snyk.io/test/github/BlinkPay/Blink-Payments-API-WooCommerce)
 
 Accept New Zealand bank payments in WooCommerce through [BlinkPay](https://www.blinkpay.co.nz) open banking:
 

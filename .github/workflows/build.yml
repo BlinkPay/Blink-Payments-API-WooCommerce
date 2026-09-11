@@ -71,29 +71,6 @@ jobs:
         with:
           build-dir: build/blinkpay-nz-for-woocommerce
 
-  snyk:
-    # Snyk runs on master pushes only; pull requests are covered by Sonar
-    # and Plugin Check.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    needs: lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 — pinned by SHA: a moving tag could be repointed at malicious code
-        with:
-          persist-credentials: false
-      # The plugin's Composer dependencies are dev-only, so Snyk Open Source
-      # has nothing shipped to scan; Snyk Code (static analysis) is what
-      # applies here.
-      - name: Run Snyk Code to check for vulnerabilities
-        uses: snyk/actions/php@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0 — pinned by SHA: a moving tag could be repointed at malicious code
-        with:
-          command: code test
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-          SNYK_ORG: blinkpay-zw9
-          SNYK_PROJECT_NAME: blinkpay-nz-for-woocommerce
-        continue-on-error: true
-
   sonar:
     if: github.event_name == 'pull_request' || ( github.event_name == 'push' && github.ref == 'refs/heads/master' )
     needs: test
