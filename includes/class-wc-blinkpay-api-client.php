@@ -1,45 +1,34 @@
 <?php
 /**
- * Minimal Blink Debit API client for WordPress.
- *
- * Covers the OAuth token endpoint plus the quick payment and refund endpoints,
- * using the gateway authorisation flow.
+ * Blink Debit API client for WordPress.
  *
  * @package blinkpay-nz-for-woocommerce
  */
 
 defined( 'ABSPATH' ) || exit;
 
+use BlinkPay\BlinkDebit\BlinkDebitApiException;
+use BlinkPay\BlinkDebit\BlinkDebitClient;
+
 /**
- * Talks to the Blink Debit API using WordPress HTTP functions only.
+ * Adapts the official Blink Debit PHP SDK to WordPress conventions.
+ *
+ * The SDK owns the protocol — authentication, token caching, retries on 429,
+ * 5xx and transport failures, local validation and the mapping of statuses to
+ * typed exceptions — while this class owns the two things that must be
+ * WordPress's: HTTP goes through the WordPress HTTP API, and tokens are cached
+ * in WordPress storage. Failures are converted to WP_Error so the gateway
+ * keeps its is_wp_error() contract; error data carries the HTTP status and
+ * decoded body the gateway inspects to tell an idempotency conflict, a missing
+ * scope and an unregistered redirect URI apart.
  */
 class WC_BlinkPay_API_Client {
 
-	const PRODUCTION_BASE_URL = 'https://debit.blinkpay.co.nz';
-	const SANDBOX_BASE_URL    = 'https://sandbox.debit.blinkpay.co.nz';
-
-	// Access tokens last one hour; refresh five minutes early so an in-flight
-	// checkout never crosses the expiry boundary with a stale token.
-	const TOKEN_EXPIRY_BUFFER = 300;
-
-	const REQUEST_TIMEOUT = 30;
-
-	const MEDIA_TYPE_JSON = 'application/json';
-
-	/** @var string */
-	private $client_id;
-
-	/** @var string */
-	private $client_secret;
-
-	/** @var bool */
-	private $sandbox;
+	/** @var BlinkDebitClient */
+	private $client;
 
 	/** @var bool */
 	private $debug;
-
-	/** @var int */
-	private $request_timeout = self::REQUEST_TIMEOUT;
 
 	/**
 	 * @param string $client_id     The BlinkPay client ID.
@@ -48,10 +37,29 @@ class WC_BlinkPay_API_Client {
 	 * @param bool   $debug         Whether to write debug entries to the WooCommerce log.
 	 */
 	public function __construct( $client_id, $client_secret, $sandbox = true, $debug = false ) {
-		$this->client_id     = trim( (string) $client_id );
-		$this->client_secret = trim( (string) $client_secret );
-		$this->sandbox       = (bool) $sandbox;
-		$this->debug         = (bool) $debug;
+		$this->debug  = (bool) $debug;
+		$this->client = new BlinkDebitClient(
+			(string) $client_id,
+			(string) $client_secret,
+			(bool) $sandbox,
+			new WC_BlinkPay_Token_Cache(),
+			new WC_BlinkPay_HTTP_Transport()
+		);
+		$this->client->setSleep(
+			function ( $milliseconds ) {
+				$this->pause( $milliseconds );
+			}
+		);
+	}
+
+	/**
+	 * Waits between the SDK's retry attempts. A seam so tests can skip real
+	 * sleeps, as WC_BlinkPay_Gateway::pause() is for its polling loops.
+	 *
+	 * @param int $milliseconds How long to pause.
+	 */
+	protected function pause( $milliseconds ) {
+		usleep( (int) $milliseconds * 1000 );
 	}
 
 	/**
@@ -63,7 +71,7 @@ class WC_BlinkPay_API_Client {
 	 * @param int $seconds The timeout in seconds.
 	 */
 	public function set_request_timeout( $seconds ) {
-		$this->request_timeout = max( 1, (int) $seconds );
+		$this->client->setRequestTimeout( (int) $seconds );
 	}
 
 	/**
@@ -72,35 +80,7 @@ class WC_BlinkPay_API_Client {
 	 * @return bool
 	 */
 	public function is_configured() {
-		return '' !== $this->client_id && '' !== $this->client_secret;
-	}
-
-	/**
-	 * @return string
-	 */
-	private function base_url() {
-		return $this->sandbox ? self::SANDBOX_BASE_URL : self::PRODUCTION_BASE_URL;
-	}
-
-	/**
-	 * Transient key scoped to the environment and client, so switching either
-	 * never reuses a token issued for the other.
-	 *
-	 * @return string
-	 */
-	private function token_cache_key() {
-		return 'wc_blinkpay_token_' . hash( 'sha256', ( $this->sandbox ? 'sandbox' : 'production' ) . '|' . $this->client_id );
-	}
-
-	/**
-	 * Option key holding the scopes last granted to this client, scoped like
-	 * the token cache. An option rather than a transient, so the grant is
-	 * still known after the token itself has expired.
-	 *
-	 * @return string
-	 */
-	private function scope_cache_key() {
-		return 'wc_blinkpay_scopes_' . hash( 'sha256', ( $this->sandbox ? 'sandbox' : 'production' ) . '|' . $this->client_id );
+		return $this->client->isConfigured();
 	}
 
 	/**
@@ -111,9 +91,7 @@ class WC_BlinkPay_API_Client {
 	 * @return string[]|null
 	 */
 	public function get_granted_scopes() {
-		$scope = get_option( $this->scope_cache_key(), '' );
-
-		return is_string( $scope ) && '' !== $scope ? preg_split( '/\s+/', trim( $scope ) ) : null;
+		return $this->client->getGrantedScopes();
 	}
 
 	/**
@@ -123,73 +101,12 @@ class WC_BlinkPay_API_Client {
 	 * @return string|WP_Error
 	 */
 	public function get_access_token( $force_refresh = false ) {
-		if ( ! $this->is_configured() ) {
-			return new WP_Error(
-				'blinkpay_not_configured',
-				__( 'BlinkPay is not configured. Enter the client ID and client secret in the gateway settings.', 'blinkpay-nz-for-woocommerce' )
-			);
+		try {
+			return $this->client->getAccessToken( (bool) $force_refresh );
+		} catch ( BlinkDebitApiException $exception ) {
+			$this->log( 'Access token request failed with HTTP ' . $exception->getStatusCode() );
+			return $this->to_wp_error( $exception );
 		}
-
-		if ( $force_refresh ) {
-			delete_transient( $this->token_cache_key() );
-		} else {
-			$cached = get_transient( $this->token_cache_key() );
-			if ( is_string( $cached ) && '' !== $cached ) {
-				return $cached;
-			}
-		}
-
-		// The documented token contract is OAuth 2.0 form encoding. The server
-		// happens to accept a JSON body too, but that is undocumented
-		// behaviour a hardening change could withdraw without notice.
-		$response = wp_remote_post(
-			$this->base_url() . '/oauth2/token',
-			array(
-				'headers' => array(
-					'Content-Type' => 'application/x-www-form-urlencoded',
-					'Accept'       => self::MEDIA_TYPE_JSON,
-				),
-				'body'    => http_build_query(
-					array(
-						'grant_type'    => 'client_credentials',
-						'client_id'     => $this->client_id,
-						'client_secret' => $this->client_secret,
-					),
-					'',
-					'&'
-				),
-				'timeout' => $this->request_timeout,
-			)
-		);
-
-		if ( is_wp_error( $response ) ) {
-			$this->log( 'Access token request failed: ' . $response->get_error_message() );
-			return $response;
-		}
-
-		$code = wp_remote_retrieve_response_code( $response );
-		$body = json_decode( wp_remote_retrieve_body( $response ), true );
-
-		if ( 200 !== $code || empty( $body['access_token'] ) ) {
-			$this->log( 'Access token request rejected with HTTP ' . $code );
-			return new WP_Error(
-				'blinkpay_auth_failed',
-				__( 'Could not authenticate with BlinkPay. Check the client ID and client secret.', 'blinkpay-nz-for-woocommerce' )
-			);
-		}
-
-		$expires_in = isset( $body['expires_in'] ) ? (int) $body['expires_in'] : 3600;
-		set_transient( $this->token_cache_key(), $body['access_token'], max( 60, $expires_in - self::TOKEN_EXPIRY_BUFFER ) );
-
-		// The granted scope decides which features (refunds) are offered, so
-		// it is retained beyond the token's own lifetime.
-		if ( isset( $body['scope'] ) && is_string( $body['scope'] ) && '' !== $body['scope'] ) {
-			update_option( $this->scope_cache_key(), $body['scope'], false );
-		} else {
-			delete_option( $this->scope_cache_key() );
-		}
-
-		return $body['access_token'];
 	}
 
 	/**
@@ -200,7 +117,12 @@ class WC_BlinkPay_API_Client {
 	 * @return array|WP_Error
 	 */
 	public function create_quick_payment( array $payload, $idempotency_key ) {
-		return $this->request( 'POST', '/quick-payments', $payload, array( 'idempotency-key' => $idempotency_key ) );
+		return $this->call(
+			'POST /quick-payments',
+			function () use ( $payload, $idempotency_key ) {
+				return $this->client->createQuickPayment( $payload, (string) $idempotency_key );
+			}
+		);
 	}
 
 	/**
@@ -211,17 +133,32 @@ class WC_BlinkPay_API_Client {
 	 * @return array|WP_Error
 	 */
 	public function get_quick_payment( $quick_payment_id ) {
-		return $this->request( 'GET', '/quick-payments/' . rawurlencode( $quick_payment_id ) );
+		return $this->call(
+			'GET /quick-payments',
+			function () use ( $quick_payment_id ) {
+				return $this->client->getQuickPayment( (string) $quick_payment_id );
+			}
+		);
 	}
 
 	/**
 	 * Creates a refund against a settled payment.
 	 *
-	 * @param array $payload The refund request body.
+	 * @param array       $payload         The refund request body.
+	 * @param string|null $idempotency_key Idempotency key so a retried refund replays
+	 *                                     instead of refunding twice, or null for none.
 	 * @return array|WP_Error
 	 */
-	public function create_refund( array $payload ) {
-		return $this->request( 'POST', '/refunds', $payload );
+	public function create_refund( array $payload, $idempotency_key = null ) {
+		return $this->call(
+			'POST /refunds',
+			function () use ( $payload, $idempotency_key ) {
+				return $this->client->createRefund(
+					$payload,
+					null === $idempotency_key ? null : (string) $idempotency_key
+				);
+			}
+		);
 	}
 
 	/**
@@ -229,98 +166,54 @@ class WC_BlinkPay_API_Client {
 	 * @return array|WP_Error
 	 */
 	public function get_refund( $refund_id ) {
-		return $this->request( 'GET', '/refunds/' . rawurlencode( $refund_id ) );
-	}
-
-	/**
-	 * Sends an authenticated request to the Blink Debit API.
-	 *
-	 * @param string     $method   HTTP method.
-	 * @param string     $path     Path under /payments/v1.
-	 * @param array|null $body     JSON body, if any.
-	 * @param array      $headers  Extra headers.
-	 * @param bool       $retrying Internal: whether this is the post-401 retry.
-	 * @return array|WP_Error Decoded JSON body (empty array for 204 responses).
-	 */
-	private function request( $method, $path, ?array $body = null, array $headers = array(), $retrying = false ) {
-		$token = $this->get_access_token( $retrying );
-		if ( is_wp_error( $token ) ) {
-			return $token;
-		}
-
-		$args = array(
-			'method'  => $method,
-			'timeout' => $this->request_timeout,
-			'headers' => array_merge(
-				array(
-					'Authorization' => 'Bearer ' . $token,
-					'Accept'        => self::MEDIA_TYPE_JSON,
-				),
-				array_filter( $headers )
-			),
+		return $this->call(
+			'GET /refunds',
+			function () use ( $refund_id ) {
+				return $this->client->getRefund( (string) $refund_id );
+			}
 		);
-
-		if ( null !== $body ) {
-			$args['headers']['Content-Type'] = self::MEDIA_TYPE_JSON;
-			$args['body']                    = wp_json_encode( $body );
-		}
-
-		$response = wp_remote_request( $this->base_url() . '/payments/v1' . $path, $args );
-
-		if ( is_wp_error( $response ) ) {
-			$this->log( $method . ' ' . $path . ' transport error: ' . $response->get_error_message() );
-			return $response;
-		}
-
-		$code = wp_remote_retrieve_response_code( $response );
-		$data = json_decode( wp_remote_retrieve_body( $response ), true );
-
-		$this->log( $method . ' ' . $path . ' returned HTTP ' . $code );
-
-		// A cached token can outlive a credential rotation; refresh once and retry.
-		if ( 401 === $code && ! $retrying ) {
-			return $this->request( $method, $path, $body, $headers, true );
-		}
-
-		if ( $code >= 400 ) {
-			return new WP_Error(
-				'blinkpay_api_error',
-				$this->extract_error_message( $data, $code ),
-				array(
-					'status' => $code,
-					'body'   => $data,
-				)
-			);
-		}
-
-		return is_array( $data ) ? $data : array();
 	}
 
 	/**
-	 * Builds a developer-facing message from a Blink Debit error response.
+	 * Runs one SDK call, logging its outcome and converting any failure to a
+	 * WP_Error.
 	 *
-	 * @param array|null $data The decoded error body.
-	 * @param int        $code The HTTP status code.
-	 * @return string
+	 * @param string   $operation The operation name, for the debug log only.
+	 * @param callable $request   The SDK call.
+	 * @return array|WP_Error
 	 */
-	private function extract_error_message( $data, $code ) {
-		$message = '';
-		if ( is_array( $data ) ) {
-			if ( ! empty( $data['message'] ) ) {
-				$message = $data['message'];
-			} elseif ( ! empty( $data['error'] ) ) {
-				$message = $data['error'];
-			}
-			if ( ! empty( $data['code'] ) ) {
-				$message .= ' (' . $data['code'] . ')';
-			}
-		}
-		if ( '' === $message ) {
-			/* translators: %d: HTTP status code */
-			$message = sprintf( __( 'BlinkPay request failed with HTTP %d.', 'blinkpay-nz-for-woocommerce' ), $code );
-		}
+	private function call( $operation, callable $request ) {
+		try {
+			$response = $request();
+			$this->log( $operation . ' succeeded' );
 
-		return $message;
+			return $response;
+		} catch ( BlinkDebitApiException $exception ) {
+			// Status 0 covers local validation and transport failures, which
+			// never reached the API.
+			$this->log( $operation . ' failed with HTTP ' . $exception->getStatusCode() );
+
+			return $this->to_wp_error( $exception );
+		}
+	}
+
+	/**
+	 * Converts an SDK exception to the WP_Error shape the gateway reads. The
+	 * SDK guarantees its messages carry no credentials, tokens or request
+	 * bodies, so they are safe to put in an order note or a log.
+	 *
+	 * @param BlinkDebitApiException $exception The SDK exception.
+	 * @return WP_Error
+	 */
+	private function to_wp_error( BlinkDebitApiException $exception ) {
+		return new WP_Error(
+			'blinkpay_api_error',
+			$exception->getMessage(),
+			array(
+				'status' => $exception->getStatusCode(),
+				'body'   => $exception->getResponseBody(),
+			)
+		);
 	}
 
 	/**

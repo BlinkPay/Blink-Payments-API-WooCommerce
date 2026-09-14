@@ -21,6 +21,8 @@ Customers are sent to BlinkPay's hosted gateway, choose their bank — or card, 
 - Store currency set to **NZD**
 - BlinkPay merchant credentials (client ID and client secret) — [contact BlinkPay](https://www.blinkpay.co.nz/contact) to get onboarded. Sandbox and production credentials are separate.
 
+The plugin talks to BlinkPay through the official [Blink Debit PHP SDK](https://github.com/BlinkPay/Blink-Payments-API-Client-PHP), which ships inside the release zip; sites need no Composer step. HTTP still goes through the WordPress HTTP API rather than cURL, so proxy constants, `http_request_*` filters and your site's CA bundle all apply as before.
+
 ## Installation
 
 1. Download `blinkpay-nz-for-woocommerce.zip` from the latest [GitHub release](../../releases) — it is built by CI and unpacks to the plugin's canonical `blinkpay-nz-for-woocommerce/` directory.
@@ -59,13 +61,15 @@ Before completing, the paid amount is verified against the order total — the q
 
 ### Access tokens
 
-The plugin requests an OAuth2 `client_credentials` token, caches it in a transient scoped to the environment and client ID, and reuses it until five minutes before its one-hour expiry, at which point the next request fetches a fresh one. A `401` (for example after a credential rotation) busts the cache and retries once.
+The SDK requests an OAuth2 `client_credentials` token and the plugin caches it in a transient scoped to the environment and client ID, reused until five minutes before its one-hour expiry, at which point the next request fetches a fresh one. A `401` (for example after a credential rotation) busts the cache and retries once. The granted scopes are kept in an option rather than a transient, so they outlive the token they arrived with.
+
+The SDK also retries a rate-limited (`429`) request, honouring a short `Retry-After`, and retries a `5xx` or network failure only where the request can be safely replayed — any `GET`, or a `POST` carrying an idempotency key. Every request carries a `request-id` and `x-correlation-id`, so BlinkPay support can trace a payment end to end.
 
 ### Refunds
 
 How the payment settled — its `accepted_reason`, recorded when the payment completes — decides the refund path.
 
-A card payment (`card_network_accepted`) is refunded with a money-moving type — `full_refund` when the whole order total is refunded and no surcharge was recorded, `partial_refund` (carrying the exact amount) otherwise — and both carry the configured PCR. The refunds API accepts no idempotency key, so refunds run under the plugin's per-order lock and a second submission is refused while one is in flight. A `201` from the refunds API does not mean the money has moved, so the plugin retrieves the refund and acts on its status: `failed` rejects the WooCommerce refund outright, `completed` is recorded as done, and anything else is noted with what the merchant must still do — authorise the refund from their own bank when the response carries a `consent_redirect`, or verify it completes in the merchant portal.
+A card payment (`card_network_accepted`) is refunded with a money-moving type — `full_refund` when the whole order total is refunded and no surcharge was recorded, `partial_refund` (carrying the exact amount) otherwise — and both carry the configured PCR. Each refund carries an idempotency key, reused while the attempt is unresolved so a retry after a lost response is replayed by BlinkPay rather than refunding twice, and discarded once the refund exists so a genuinely different refund creates a new one. Refunds also run under the plugin's per-order lock, so a second submission is refused while one is in flight. A `201` from the refunds API does not mean the money has moved, so the plugin retrieves the refund and acts on its status: `failed` rejects the WooCommerce refund outright, `completed` is recorded as done, and anything else is noted with what the merchant must still do — authorise the refund from their own bank when the response carries a `consent_redirect`, or verify it completes in the merchant portal.
 
 A bank payment (`source_bank_payment_sent`, or an order from before the reason was recorded) uses the `account_number` refund type, which **does not move money**. The bank account number the customer paid from is shown in the **BlinkPay manual refunds** panel on the order screen so you can transfer the refund from your own bank — the panel fetches the number live from the BlinkPay API each time it renders, so the number is displayed but deliberately never stored in WordPress (it is also available in the BlinkPay merchant portal). The private order note carries the refund reference and points at the panel, and a customer-visible note says the refund will arrive by bank transfer, so the outstanding obligation is not buried in a private note.
 
@@ -131,11 +135,28 @@ docker run --rm -v "$PWD":/app -w /app composer:2 sh -c "composer install && com
 
 [Plugin Check](https://wordpress.org/plugins/plugin-check/) is the tool the WordPress.org review team runs against submissions. Run it before every release:
 
+Check the built tree rather than the repository root, as CI does: the zip is what the review team receives, and it contains the bundled SDK under `vendor/` but none of the development files. Build it, point wp-env at it with a local `.wp-env.override.json`, then check it:
+
 ```sh
-npx @wordpress/env run cli wp plugin check Blink-Payments-API-WooCommerce --slug=blinkpay-nz-for-woocommerce --exclude-directories=.github,.idea,.wordpress-org,tests,vendor --exclude-files=.gitignore,.wp-env.json,composer.json,composer.lock,phpunit.xml.dist,.phpunit.result.cache
+.github/build-plugin.sh
+
+cat > .wp-env.override.json <<'JSON'
+{
+	"plugins": [
+		"https://downloads.wordpress.org/plugin/woocommerce.latest-stable.zip",
+		"https://downloads.wordpress.org/plugin/plugin-check.latest-stable.zip",
+		"./build/blinkpay-nz-for-woocommerce"
+	]
+}
+JSON
+
+npx @wordpress/env start
+npx @wordpress/env run cli wp plugin check blinkpay-nz-for-woocommerce
 ```
 
-`--slug` is required because wp-env mounts the plugin under the repository's directory name; without it every translated string is reported as a text-domain mismatch. The excludes skip files that exist only in the repository — CI leaves them out of the plugin zip. A clean run prints `Success: Checks complete. No errors found.`
+No `--slug` is needed this way, because the built directory already carries the plugin's canonical name; checking the repository root instead needs `--slug=blinkpay-nz-for-woocommerce` or every translated string is reported as a text-domain mismatch. A clean run prints `Success: Checks complete. No errors found.`
+
+`.wp-env.override.json` is local only — git-ignored and excluded from the build — so delete it when you are done. Re-run `npx @wordpress/env start` after each rebuild if the mount goes stale.
 
 ### Releasing
 
@@ -143,7 +164,7 @@ CI lints every PHP file on PHP 7.4–8.4, runs the unit tests on PHP 7.4 and 8.4
 
 1. Bump `Version` and `WC tested up to` in `blinkpay-nz-for-woocommerce.php`, `WC_BLINKPAY_VERSION` in the same file, and `Stable tag`, `Tested up to` and the changelog in `readme.txt`. `Version`, `WC_BLINKPAY_VERSION`, `Stable tag` and the git tag must all carry the same version number — WordPress serves the zip named by `Stable tag`, `WC_BLINKPAY_VERSION` cache-busts the enqueued scripts, and the tag names the GitHub release, so a mismatch ships stale code or assets.
 2. Run Plugin Check and place a sandbox test order.
-3. `git tag -a 1.1.2 -m "1.1.2" && git push origin 1.1.2`
+3. `git tag -a 1.2.0 -m "1.2.0" && git push origin 1.2.0`
 
 The WordPress.org step checks out `https://plugins.svn.wordpress.org/blinkpay-nz-for-woocommerce/`, replaces `trunk` with the built plugin directory, copies `.wordpress-org/` (banner and icon) to `assets`, tags the version and commits once. It refuses to run if `Version`, `WC_BLINKPAY_VERSION` or `Stable tag` disagree with the git tag. It authenticates with the `SVN_USERNAME` and `SVN_PASSWORD` repository secrets — the WordPress.org account that owns the plugin and a dedicated SVN password generated in that account's settings, never the login password. Every SVN commit rebuilds every version's zip on WordPress.org, so releases go through this step only; never commit to SVN by hand between releases.
 

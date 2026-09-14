@@ -23,8 +23,11 @@ jobs:
         with:
           php-version: ${{ matrix.php-version }}
           coverage: none
+      # vendor is excluded deliberately: the Blink Debit SDK ships framework
+      # test fixtures that target PHP 8.2+, and this job lints the code this
+      # repository owns, across every PHP version the plugin supports.
       - name: Lint PHP files
-        run: find . -name '*.php' -not -path './.git/*' -print0 | xargs -0 -n1 php -l
+        run: find . -name '*.php' -not -path './.git/*' -not -path './vendor/*' -not -path './build/*' -print0 | xargs -0 -n1 php -l
 
   test:
     needs: lint

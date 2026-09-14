@@ -4,8 +4,98 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "06700c3762b4494a93208200c7b3c579",
-    "packages": [],
+    "content-hash": "edf1f97be336b0d3c1d6b760784e3212",
+    "packages": [
+        {
+            "name": "blinkpay-nz/blink-debit-api-client-php",
+            "version": "1.0.2",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/BlinkPay/Blink-Payments-API-Client-PHP.git",
+                "reference": "ad4937ec057801826c2e496655e4346924ee98ea"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/BlinkPay/Blink-Payments-API-Client-PHP/zipball/ad4937ec057801826c2e496655e4346924ee98ea",
+                "reference": "ad4937ec057801826c2e496655e4346924ee98ea",
+                "shasum": ""
+            },
+            "require": {
+                "ext-curl": "*",
+                "ext-json": "*",
+                "php": "^7.4 || ^8.0"
+            },
+            "require-dev": {
+                "nyholm/psr7": "^1.8",
+                "phpstan/phpstan": "^2.0",
+                "phpunit/phpunit": "^9.6 || ^10.0 || ^11.0",
+                "psr/cache": "^1.0",
+                "psr/http-client": "^1.0",
+                "psr/http-factory": "^1.0",
+                "psr/http-message": "^1.1 || ^2.0",
+                "psr/simple-cache": "^1.0"
+            },
+            "suggest": {
+                "cakephp/cakephp": "Plugin BlinkPay\\BlinkDebit\\CakePHP\\BlinkDebitPlugin (CakePHP 4.2+)",
+                "ext-apcu": "Selected automatically as the token cache, so tokens survive between PHP-FPM requests without configuration",
+                "laravel/framework": "Auto-discovered service provider BlinkPay\\BlinkDebit\\Laravel\\BlinkDebitServiceProvider",
+                "psr/cache": "To persist access tokens in a PSR-6 cache pool via Psr6TokenCache (Symfony)",
+                "psr/http-client": "To send requests through a PSR-18 HTTP client via Psr18Transport (with psr/http-factory and psr/http-message)",
+                "psr/simple-cache": "To persist access tokens in a PSR-16 cache via Psr16TokenCache (Laravel, CakePHP)",
+                "symfony/framework-bundle": "Bundle BlinkPay\\BlinkDebit\\Symfony\\BlinkDebitBundle (Symfony 6.1+)"
+            },
+            "type": "library",
+            "extra": {
+                "laravel": {
+                    "providers": [
+                        "BlinkPay\\BlinkDebit\\Laravel\\BlinkDebitServiceProvider"
+                    ]
+                }
+            },
+            "autoload": {
+                "psr-4": {
+                    "BlinkPay\\BlinkDebit\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "BlinkPay",
+                    "email": "support@blinkpay.co.nz",
+                    "homepage": "https://www.blinkpay.co.nz",
+                    "role": "Company"
+                },
+                {
+                    "name": "Rey Vincent Babilonia",
+                    "email": "rey.babilonia@blinkpay.co.nz",
+                    "role": "Developer"
+                }
+            ],
+            "description": "Framework-agnostic PHP client for the Blink Debit API (Blink PayNow and Blink AutoPay): consents, quick payments, payments, refunds, fixed recurring payments, transactions and webhooks, with PSR-18/PSR-16/PSR-6 adapters and Laravel, Symfony and CakePHP glue",
+            "homepage": "https://www.blinkpay.co.nz",
+            "keywords": [
+                "blink-debit",
+                "blinkpay",
+                "cakephp",
+                "laravel",
+                "new-zealand",
+                "open-banking",
+                "payments",
+                "psr-18",
+                "symfony"
+            ],
+            "support": {
+                "docs": "https://merchants.blinkpay.co.nz/resources",
+                "email": "support@blinkpay.co.nz",
+                "issues": "https://github.com/BlinkPay/Blink-Payments-API-Client-PHP/issues",
+                "source": "https://github.com/BlinkPay/Blink-Payments-API-Client-PHP"
+            },
+            "time": "2026-09-13T21:27:28+00:00"
+        }
+    ],
     "packages-dev": [
         {
             "name": "doctrine/instantiator",
@@ -1794,7 +1884,8 @@
     "prefer-stable": false,
     "prefer-lowest": false,
     "platform": {
-        "php": ">=7.4"
+        "php": ">=7.4",
+        "ext-json": "*"
     },
     "platform-dev": {},
     "platform-overrides": {
