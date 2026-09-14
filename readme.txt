@@ -1,6 +1,6 @@
 === BlinkPay NZ for WooCommerce ===
 Contributors: reybabilonia
-Tags: woocommerce, payment gateway, open banking, new zealand, bank payments, blinkpay, blink paynow
+Tags: payment gateway, open banking, new zealand, pay by bank, pay by card
 Requires at least: 6.0
 Tested up to: 7.1
 Requires PHP: 7.4
