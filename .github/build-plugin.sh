@@ -8,6 +8,31 @@ cd "$(dirname "$0")/.."
 
 BUILD_DIR=build/blinkpay-nz-for-woocommerce
 
+# Every PHP file the plugin bootstrap requires. Checked up front so a file
+# that exists locally but was never committed fails here, naming itself,
+# rather than as an opaque "failed to open stream" from the smoke test below
+# or — worse — as a fatal on a merchant's site after a release.
+REQUIRED_FILES="
+blinkpay-nz-for-woocommerce.php
+uninstall.php
+includes/class-wc-blinkpay-api-client.php
+includes/class-wc-blinkpay-blocks-support.php
+includes/class-wc-blinkpay-gateway.php
+includes/class-wc-blinkpay-http-transport.php
+includes/class-wc-blinkpay-refund-blocked-exception.php
+includes/class-wc-blinkpay-token-cache.php
+"
+missing=''
+for file in $REQUIRED_FILES; do
+	[ -f "$file" ] || missing="$missing  $file
+"
+done
+if [ -n "$missing" ]; then
+	echo "::error::build-plugin.sh: required plugin files are missing from the checkout (untracked, or not committed):"
+	printf '%s' "$missing"
+	exit 1
+fi
+
 # Emptied rather than removed and recreated, so a stale file from a previous
 # build cannot survive into a release while the directory keeps its inode —
 # wp-env bind-mounts this path, and a recreated directory leaves that mount
