@@ -3,7 +3,7 @@
  * Plugin Name: BlinkPay NZ for WooCommerce
  * Plugin URI: https://github.com/BlinkPay/Blink-Payments-API-WooCommerce
  * Description: Accept New Zealand bank payments through BlinkPay open banking with Blink PayNow one-off payments.
- * Version: 1.1.1
+ * Version: 1.2.0
  * Author: BlinkPay
  * Author URI: https://www.blinkpay.co.nz
  * License: MIT
@@ -18,7 +18,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'WC_BLINKPAY_VERSION', '1.1.1' );
+define( 'WC_BLINKPAY_VERSION', '1.2.0' );
 define( 'WC_BLINKPAY_PLUGIN_FILE', __FILE__ );
 define( 'WC_BLINKPAY_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 define( 'WC_BLINKPAY_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
@@ -45,6 +45,17 @@ function wc_blinkpay_init() {
 		return;
 	}
 
+	// The Blink Debit SDK ships in the release zip. A git clone has no vendor
+	// directory until composer install has run, and taking payments is not
+	// something to attempt half-loaded, so the gateway is not registered.
+	if ( ! file_exists( WC_BLINKPAY_PLUGIN_PATH . 'vendor/autoload.php' ) ) {
+		add_action( 'admin_notices', 'wc_blinkpay_dependencies_missing_notice' );
+		return;
+	}
+	require_once WC_BLINKPAY_PLUGIN_PATH . 'vendor/autoload.php';
+
+	require_once WC_BLINKPAY_PLUGIN_PATH . 'includes/class-wc-blinkpay-http-transport.php';
+	require_once WC_BLINKPAY_PLUGIN_PATH . 'includes/class-wc-blinkpay-token-cache.php';
 	require_once WC_BLINKPAY_PLUGIN_PATH . 'includes/class-wc-blinkpay-api-client.php';
 	require_once WC_BLINKPAY_PLUGIN_PATH . 'includes/class-wc-blinkpay-gateway.php';
 	require_once WC_BLINKPAY_PLUGIN_PATH . 'includes/class-wc-blinkpay-refund-blocked-exception.php';
@@ -252,6 +263,20 @@ function wc_blinkpay_woocommerce_missing_notice() {
 	}
 	echo '<div class="notice notice-error"><p>'
 		. esc_html__( 'BlinkPay NZ for WooCommerce requires WooCommerce to be installed and active.', 'blinkpay-nz-for-woocommerce' )
+		. '</p></div>';
+}
+
+/**
+ * Shows the missing-dependencies notice, only to users who can act on it.
+ * Reached when the plugin was installed from source rather than from a
+ * release zip, which bundles the Blink Debit SDK.
+ */
+function wc_blinkpay_dependencies_missing_notice() {
+	if ( ! current_user_can( 'activate_plugins' ) ) {
+		return;
+	}
+	echo '<div class="notice notice-error"><p>'
+		. esc_html__( 'BlinkPay NZ for WooCommerce is missing its dependencies. Install the plugin from a release zip, or run "composer install --no-dev" in the plugin directory.', 'blinkpay-nz-for-woocommerce' )
 		. '</p></div>';
 }
 

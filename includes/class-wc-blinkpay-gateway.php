@@ -10,6 +10,8 @@
 
 defined( 'ABSPATH' ) || exit;
 
+use BlinkPay\BlinkDebit\Pcr;
+
 /**
  * BlinkPay payment gateway.
  */
@@ -24,14 +26,18 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	// How long the per-order lock may be held, in seconds, before another
 	// process may break it. Sized above the worst-case holder — the
 	// account-number refund path's create plus INLINE_POLL_ATTEMPTS
-	// retrievals at the API client's 30-second timeout, plus the pauses
-	// between them — so a slow but live operation is never barged in on,
-	// while a crashed holder's lock is broken by the next acquirer within
-	// minutes. A holder that does overrun (payment_complete() sends order
-	// emails synchronously, so a slow mail relay stretches the budget) loses
-	// only its own lock: release is token-checked, so it can never free a
+	// retrievals, each of which the SDK may retry twice on a 429, 5xx or
+	// transport failure (up to three attempts at the 30-second timeout, with
+	// 1- and 5-second backoff, so ~96 seconds per call), plus the pauses
+	// between them: about 584 seconds. A slow but live operation is
+	// therefore never barged in on, while a crashed holder's lock is broken
+	// by the next acquirer well inside the deferred checks' own retry budget
+	// (ORDER_LOCK_MAX_RETRIES x ORDER_LOCK_RETRY_DELAY, half an hour). A
+	// holder that does overrun (payment_complete() sends order emails
+	// synchronously, so a slow mail relay stretches the budget) loses only
+	// its own lock: release is token-checked, so it can never free a
 	// successor's.
-	const ORDER_LOCK_TIMEOUT = 300;
+	const ORDER_LOCK_TIMEOUT = 900;
 
 	// How soon a deferred check that lost the lock retries. No check ran, so
 	// it must not wait out a whole tier delay — 2 hours in the last tier.
@@ -1340,11 +1346,13 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			return new WP_Error( 'blinkpay_refund_failed', __( 'The refund amount must be greater than zero.', 'blinkpay-nz-for-woocommerce' ) );
 		}
 
-		// The refunds API accepts no idempotency key and allows multiple
-		// money-transfer refunds against one payment, so a double submission
-		// — an admin retrying after a proxy timeout, or two admins acting at
-		// once — must be blocked here, by the same per-order lock that
-		// serialises order completion.
+		// The refunds API allows multiple money-transfer refunds against one
+		// payment, so a double submission — an admin retrying after a proxy
+		// timeout, or two admins acting at once — must be blocked. The
+		// idempotency key execute_refund() sends makes the API itself replay
+		// a retried request rather than refund twice; the per-order lock,
+		// the same one that serialises order completion, additionally keeps
+		// two concurrent submissions from both reaching that point.
 		$lock = $this->acquire_order_lock( $order->get_id() );
 		if ( ! $lock ) {
 			return new WP_Error( 'blinkpay_refund_failed', __( 'Another BlinkPay operation on this order is still in progress. Check the order notes and the BlinkPay merchant portal for the outcome of the previous request before retrying the refund.', 'blinkpay-nz-for-woocommerce' ) );
@@ -1370,8 +1378,14 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	private function execute_refund( $order, $payment_id, $amount, $reason ) {
 		$client = $this->get_api_client();
 
+		// Reused while this refund attempt is unresolved, so a retry after a
+		// lost response replays the original instead of refunding twice, and
+		// discarded once the refund exists so the next distinct refund — a
+		// second partial against the same payment — creates a new one.
+		$idempotency_key = $this->get_idempotency_key( $order, 'refund' );
+
 		if ( 'card_network_accepted' !== $order->get_meta( '_blinkpay_accepted_reason' ) ) {
-			return $this->process_account_number_refund( $order, $client, $payment_id, $amount, $reason );
+			return $this->process_account_number_refund( $order, $client, $payment_id, $amount, $reason, $idempotency_key );
 		}
 
 		// Refunding the whole order total refunds the whole payment — but only
@@ -1395,13 +1409,28 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			);
 		}
 
-		$response = $client->create_refund( $payload );
+		$response = $client->create_refund( $payload, $idempotency_key );
 
 		if ( is_wp_error( $response ) || empty( $response['refund_id'] ) ) {
-			return $this->refund_creation_error( $response );
+			return $this->refund_creation_error( $order, $response );
 		}
 
+		$this->retire_refund_idempotency_key( $order );
+
 		return $this->finalise_money_transfer_refund( $order, $client, $amount, $reason, $response['refund_id'] );
+	}
+
+	/**
+	 * Discards the refund idempotency key now that it is bound to a created
+	 * refund. The API binds a key permanently to the refund it creates, so
+	 * leaving it in place would make a later, genuinely different refund
+	 * against the same order replay this one instead of moving money.
+	 *
+	 * @param WC_Order $order The order.
+	 */
+	private function retire_refund_idempotency_key( $order ) {
+		$this->reset_idempotency_key( $order, 'refund' );
+		$order->save();
 	}
 
 	/**
@@ -1410,17 +1439,39 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	 * message, and an empty 2xx response warns the merchant to check the
 	 * portal before retrying, in case the refund was created.
 	 *
+	 * Every other failure leaves the idempotency key in place, so retrying
+	 * the same refund replays it rather than creating a second one — except
+	 * the 409 that says the key is already spent, where the key is discarded
+	 * so a retry can mint a fresh one.
+	 *
+	 * @param WC_Order       $order    The order.
 	 * @param array|WP_Error $response The create_refund() response.
 	 * @return WP_Error
 	 */
-	private function refund_creation_error( $response ) {
+	private function refund_creation_error( $order, $response ) {
 		if ( ! is_wp_error( $response ) ) {
 			return new WP_Error( 'blinkpay_refund_failed', __( 'BlinkPay did not return a refund ID. Check the BlinkPay merchant portal for the refund before retrying.', 'blinkpay-nz-for-woocommerce' ) );
 		}
 
-		$data = $response->get_error_data();
-		if ( is_array( $data ) && isset( $data['status'] ) && 403 === (int) $data['status'] ) {
+		$data   = $response->get_error_data();
+		$status = is_array( $data ) && isset( $data['status'] ) ? (int) $data['status'] : 0;
+
+		if ( 403 === $status ) {
 			return new WP_Error( 'blinkpay_refund_failed', __( 'BlinkPay declined the refund because this client is missing the refund permissions (create:refund and view:refund). Contact BlinkPay to enable refunds for your merchant account.', 'blinkpay-nz-for-woocommerce' ) );
+		}
+
+		// The stored key is bound to an earlier request — one still in flight,
+		// one already terminal, or one whose payload differed. Whichever it
+		// is, this key can never create the refund the merchant asked for, so
+		// it is discarded and they are sent to confirm the outcome first: a
+		// retry that blindly minted a fresh key could refund twice.
+		if ( 409 === $status ) {
+			$this->retire_refund_idempotency_key( $order );
+
+			return new WP_Error(
+				'blinkpay_refund_failed',
+				__( 'BlinkPay rejected the refund because the stored idempotency key is already bound to an earlier refund request. Check the BlinkPay merchant portal for that refund\'s outcome before requesting this one again, so the customer is not refunded twice.', 'blinkpay-nz-for-woocommerce' )
+			);
 		}
 
 		return new WP_Error( 'blinkpay_refund_failed', $response->get_error_message() );
@@ -1482,25 +1533,29 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	 * customer-visible note makes the outstanding manual transfer obvious on
 	 * the order rather than leaving the obligation buried in the private note.
 	 *
-	 * @param WC_Order               $order      The order.
-	 * @param WC_BlinkPay_API_Client $client     The API client.
-	 * @param string                 $payment_id The BlinkPay payment ID.
-	 * @param float                  $amount     The refund amount.
-	 * @param string                 $reason     The refund reason.
+	 * @param WC_Order               $order           The order.
+	 * @param WC_BlinkPay_API_Client $client          The API client.
+	 * @param string                 $payment_id      The BlinkPay payment ID.
+	 * @param float                  $amount          The refund amount.
+	 * @param string                 $reason          The refund reason.
+	 * @param string                 $idempotency_key The key binding this refund attempt.
 	 * @return bool|WP_Error
 	 */
-	private function process_account_number_refund( $order, $client, $payment_id, $amount, $reason ) {
+	private function process_account_number_refund( $order, $client, $payment_id, $amount, $reason, $idempotency_key ) {
 		$response = $client->create_refund(
 			array(
 				'type'       => 'account_number',
 				'payment_id' => $payment_id,
-			)
+			),
+			$idempotency_key
 		);
 		if ( is_wp_error( $response ) || empty( $response['refund_id'] ) ) {
-			return $this->refund_creation_error( $response );
+			return $this->refund_creation_error( $order, $response );
 		}
 
 		$refund_id = $response['refund_id'];
+
+		$this->retire_refund_idempotency_key( $order );
 
 		// The refund exists from here on, so nothing below may return an
 		// error that invites creating a second one. Poll briefly so a refund
@@ -1922,34 +1977,24 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 	 * @return array
 	 */
 	public function build_pcr( $particulars, $reference, $code = '' ) {
-		$particulars = $this->sanitise_pcr_field( $particulars );
+		$particulars = Pcr::sanitiseField( (string) $particulars );
 		if ( '' === $particulars ) {
 			$particulars = 'Order';
 		}
 
 		$pcr = array( 'particulars' => $particulars );
 
-		$code = $this->sanitise_pcr_field( $code );
+		$code = Pcr::sanitiseField( (string) $code );
 		if ( '' !== $code ) {
 			$pcr['code'] = $code;
 		}
 
-		$reference = $this->sanitise_pcr_field( $reference );
+		$reference = Pcr::sanitiseField( (string) $reference );
 		if ( '' !== $reference ) {
 			$pcr['reference'] = $reference;
 		}
 
 		return $pcr;
-	}
-
-	/**
-	 * @param string $value The raw value.
-	 * @return string
-	 */
-	private function sanitise_pcr_field( $value ) {
-		$value = preg_replace( "/[^a-zA-Z0-9\- &#?:_\/,.']/", '', (string) $value );
-
-		return substr( $value, 0, 12 );
 	}
 
 	/**

@@ -1,0 +1,9 @@
+version: 2
+updates:
+  # Actions are SHA-pinned; Dependabot bumps the SHA and its version comment together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore"
