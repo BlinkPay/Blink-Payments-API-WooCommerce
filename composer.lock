@@ -4,20 +4,20 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "edf1f97be336b0d3c1d6b760784e3212",
+    "content-hash": "9085cf985f6103556c2c41ab0aaca840",
     "packages": [
         {
             "name": "blinkpay-nz/blink-debit-api-client-php",
-            "version": "1.0.2",
+            "version": "1.0.3",
             "source": {
                 "type": "git",
                 "url": "https://github.com/BlinkPay/Blink-Payments-API-Client-PHP.git",
-                "reference": "ad4937ec057801826c2e496655e4346924ee98ea"
+                "reference": "3bb0b00204fe28646069156565f5631b0219305e"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/BlinkPay/Blink-Payments-API-Client-PHP/zipball/ad4937ec057801826c2e496655e4346924ee98ea",
-                "reference": "ad4937ec057801826c2e496655e4346924ee98ea",
+                "url": "https://api.github.com/repos/BlinkPay/Blink-Payments-API-Client-PHP/zipball/3bb0b00204fe28646069156565f5631b0219305e",
+                "reference": "3bb0b00204fe28646069156565f5631b0219305e",
                 "shasum": ""
             },
             "require": {
@@ -93,7 +93,7 @@
                 "issues": "https://github.com/BlinkPay/Blink-Payments-API-Client-PHP/issues",
                 "source": "https://github.com/BlinkPay/Blink-Payments-API-Client-PHP"
             },
-            "time": "2026-09-13T21:27:28+00:00"
+            "time": "2026-09-15T08:59:58+00:00"
         }
     ],
     "packages-dev": [
