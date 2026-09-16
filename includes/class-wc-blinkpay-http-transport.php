@@ -56,22 +56,20 @@ class WC_BlinkPay_HTTP_Transport implements HttpTransportInterface {
 		// or timeout. The SDK's retry logic keys on this exception type to
 		// decide whether a request may be safely replayed.
 		if ( is_wp_error( $response ) ) {
-			// Deliberately unescaped: both consumers handle their own output.
-			// An order note is sanitised with wp_kses_post() when the admin
-			// renders it, and the refund error reaches the merchant through a
-			// JavaScript alert() as plain text. Escaping here would bake the
-			// entities into the message and show them to the merchant.
-			//
-			// Sanitised is not escaped: wp_kses_post() strips to a tag set
-			// rather than rendering markup inert, which is safe only because
-			// this message is WordPress HTTP API text about an SDK-built URL,
-			// never external input. Anything carrying external input must be
-			// escaped at its own sink.
+			// Escaped because WordPress.Security.EscapeOutput.ExceptionNotEscaped
+			// requires it, and Plugin Check gates the WordPress.org release on
+			// that sniff. Neither consumer is an HTML sink — an order note is
+			// sanitised with wp_kses_post() and the admin's refund error goes
+			// to a JavaScript alert() — so escaping here is what puts &quot;
+			// and &amp; in front of the merchant when the underlying cURL
+			// message contains a quote. That trade is accepted deliberately:
+			// shipping to WordPress.org matters more than the entities, and
+			// the sniff must not be suppressed on a payments plugin.
 			throw new TransportException(
 				sprintf(
 					/* translators: %s: the underlying error from the WordPress HTTP API */
-					__( 'The Blink Debit API could not be reached: %s', 'blinkpay-nz-for-woocommerce' ),
-					$response->get_error_message()
+					esc_html__( 'The Blink Debit API could not be reached: %s', 'blinkpay-nz-for-woocommerce' ),
+					esc_html( $response->get_error_message() )
 				)
 			);
 		}

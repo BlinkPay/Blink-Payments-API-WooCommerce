@@ -43,7 +43,7 @@ class ManualRefundBlockTest extends TestCase {
 		);
 	}
 
-	public function test_the_veto_message_is_left_unescaped_for_its_consumers() {
+	public function test_the_veto_message_stays_escaped_for_plugin_check() {
 		$this->register_order( 605 );
 
 		try {
@@ -57,12 +57,12 @@ class ManualRefundBlockTest extends TestCase {
 			);
 			$this->fail( 'A money-carrying manual refund must be vetoed.' );
 		} catch ( WC_BlinkPay_Refund_Blocked_Exception $exception ) {
-			// wc_create_refund() hands this message back verbatim as a
-			// WP_Error, which reaches the merchant through a JavaScript
-			// alert() and the REST API as JSON. Escaping it here would show
-			// them &quot; around the button name they are being sent to.
-			$this->assertStringContainsString( '"Refund via BlinkPay"', $exception->getMessage() );
-			$this->assertStringNotContainsString( '&quot;', $exception->getMessage() );
+			// Plugin Check gates the WordPress.org release on
+			// WordPress.Security.EscapeOutput.ExceptionNotEscaped. The
+			// merchant does see &quot; around the button name in the refund
+			// alert; that is the accepted cost of not suppressing an escaping
+			// sniff, and removing esc_html__() to tidy it breaks the release.
+			$this->assertStringContainsString( '&quot;Refund via BlinkPay&quot;', $exception->getMessage() );
 		}
 	}
 

@@ -216,13 +216,14 @@ function wc_blinkpay_block_manual_refund( $refund, $args ) {
 	// and a financial control must not key off a filterable value.
 	$order = wc_get_order( $refund->get_parent_id( 'edit' ) );
 	if ( $order && 'blinkpay' === $order->get_payment_method() ) {
-		// Not escaped: wc_create_refund() hands this message back verbatim as
-		// a WP_Error, which the admin shows through a JavaScript alert() and
-		// the REST API returns as JSON. Neither is an HTML sink, so escaping
-		// here only put &quot; around "Refund via BlinkPay" in front of the
-		// merchant. Escape at the sink if this message ever reaches markup.
+		// Escaped for WordPress.Security.EscapeOutput.ExceptionNotEscaped,
+		// which Plugin Check gates the WordPress.org release on. wc_create_refund()
+		// hands the message back verbatim as a WP_Error that reaches a
+		// JavaScript alert() and the REST API, so the merchant does see
+		// &quot; around the button name; that is accepted rather than
+		// suppress an escaping sniff on a payments plugin.
 		throw new WC_BlinkPay_Refund_Blocked_Exception(
-			__( 'BlinkPay orders cannot be refunded manually: a manual refund records money as returned while none has moved. Use "Refund via BlinkPay" instead.', 'blinkpay-nz-for-woocommerce' )
+			esc_html__( 'BlinkPay orders cannot be refunded manually: a manual refund records money as returned while none has moved. Use "Refund via BlinkPay" instead.', 'blinkpay-nz-for-woocommerce' )
 		);
 	}
 }

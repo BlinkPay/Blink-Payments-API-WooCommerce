@@ -16,6 +16,16 @@
         }
     },
     "scripts": {
-        "test": "phpunit"
+        "test": [
+            "@test:unit",
+            "@test:plugin-check"
+        ],
+        "test:unit": "phpunit",
+        "test:plugin-check": ".github/plugin-check.sh"
+    },
+    "scripts-descriptions": {
+        "test": "Runs the unit tests and Plugin Check, the two gates CI enforces.",
+        "test:unit": "Runs the unit tests only. No Docker required.",
+        "test:plugin-check": "Builds the plugin and runs Plugin Check against the built tree, as the release job does. Requires Docker."
     }
 }

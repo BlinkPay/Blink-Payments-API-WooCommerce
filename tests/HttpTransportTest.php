@@ -157,7 +157,7 @@ class HttpTransportTest extends TestCase {
 		$transport->send( 'GET', 'https://sandbox.debit.blinkpay.co.nz/payments/v1/meta', array(), null, 30 );
 	}
 
-	public function test_the_failure_message_is_left_unescaped_for_its_consumers() {
+	public function test_the_failure_message_stays_escaped_for_plugin_check() {
 		$GLOBALS['wc_blinkpay_http_responses'][] = new WP_Error(
 			'http_request_failed',
 			'cURL error 60: SSL peer certificate "debit.blinkpay.co.nz" & chain rejected.'
@@ -169,12 +169,13 @@ class HttpTransportTest extends TestCase {
 			$transport->send( 'GET', 'https://sandbox.debit.blinkpay.co.nz/payments/v1/meta', array(), null, 30 );
 			$this->fail( 'A WP_Error must become a TransportException.' );
 		} catch ( TransportException $exception ) {
-			// Order notes are sanitised with wp_kses_post() on output and the
-			// admin's refund error is shown through a JavaScript alert();
-			// escaping here would put &quot; and &amp; in front of the merchant.
-			$this->assertStringContainsString( '"debit.blinkpay.co.nz" & chain', $exception->getMessage() );
-			$this->assertStringNotContainsString( '&amp;', $exception->getMessage() );
-			$this->assertStringNotContainsString( '&quot;', $exception->getMessage() );
+			// Plugin Check gates the WordPress.org release on
+			// WordPress.Security.EscapeOutput.ExceptionNotEscaped, so the
+			// message must stay escaped even though no consumer is an HTML
+			// sink. Dropping esc_html() here reads as a tidy-up of the
+			// entities the merchant sees and silently breaks the release.
+			$this->assertStringContainsString( '&quot;debit.blinkpay.co.nz&quot;', $exception->getMessage() );
+			$this->assertStringContainsString( '&amp;', $exception->getMessage() );
 		}
 	}
 }
