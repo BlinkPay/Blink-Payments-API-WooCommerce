@@ -56,10 +56,23 @@ class WC_BlinkPay_HTTP_Transport implements HttpTransportInterface {
 		// or timeout. The SDK's retry logic keys on this exception type to
 		// decide whether a request may be safely replayed.
 		if ( is_wp_error( $response ) ) {
-			// Escaped because the message travels out as a WP_Error and is
-			// rendered into order notes and the admin's refund errors.
+			// Deliberately unescaped: both consumers handle their own output.
+			// An order note is sanitised with wp_kses_post() when the admin
+			// renders it, and the refund error reaches the merchant through a
+			// JavaScript alert() as plain text. Escaping here would bake the
+			// entities into the message and show them to the merchant.
+			//
+			// Sanitised is not escaped: wp_kses_post() strips to a tag set
+			// rather than rendering markup inert, which is safe only because
+			// this message is WordPress HTTP API text about an SDK-built URL,
+			// never external input. Anything carrying external input must be
+			// escaped at its own sink.
 			throw new TransportException(
-				sprintf( 'The Blink Debit API could not be reached: %s', esc_html( $response->get_error_message() ) )
+				sprintf(
+					/* translators: %s: the underlying error from the WordPress HTTP API */
+					__( 'The Blink Debit API could not be reached: %s', 'blinkpay-nz-for-woocommerce' ),
+					$response->get_error_message()
+				)
 			);
 		}
 

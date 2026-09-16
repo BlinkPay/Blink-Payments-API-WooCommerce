@@ -152,6 +152,37 @@ function wp_remote_retrieve_headers( $response ) {
 }
 
 /**
+ * Stands in for the WpOrg\Requests\Utility\CaseInsensitiveDictionary that
+ * WordPress really returns from wp_remote_retrieve_headers(). A plain array
+ * would never exercise the getAll() unwrapping the transport depends on, which
+ * is the line that decides whether Retry-After reaches the SDK's backoff.
+ *
+ * WP_HTTP_Requests_Response::get_headers() collapses a header seen once to a
+ * scalar and keeps an array only for a repeated one, so both value shapes are
+ * real. Its keys arrive lower-cased; the tests pass them in mixed case anyway,
+ * which additionally exercises the transport's own lower-casing.
+ */
+class WC_BlinkPay_Test_Header_Dictionary {
+
+	/** @var array<string, string|string[]> */
+	private $data;
+
+	/**
+	 * @param array $data The headers, keyed as WordPress would key them.
+	 */
+	public function __construct( array $data ) {
+		$this->data = $data;
+	}
+
+	/**
+	 * @return array<string, string|string[]>
+	 */
+	public function getAll() { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid -- mirrors the WordPress class this stands in for.
+		return $this->data;
+	}
+}
+
+/**
  * Thrown by the wp_safe_redirect() stub so tests can observe the redirect
  * target instead of exiting the process; the message carries the location.
  */
@@ -299,6 +330,10 @@ class WP_Error {
 		$this->code    = $code;
 		$this->message = $message;
 		$this->data    = $data;
+	}
+
+	public function get_error_code() {
+		return $this->code;
 	}
 
 	public function get_error_message() {

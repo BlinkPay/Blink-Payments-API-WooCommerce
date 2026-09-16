@@ -101,6 +101,27 @@ class WC_BlinkPay_API_Client {
 	 * @return string|WP_Error
 	 */
 	public function get_access_token( $force_refresh = false ) {
+		// Answered here rather than left to the SDK, whose wording is
+		// untranslated and does not say where the credentials are entered.
+		// Nothing in the plugin calls this method today — the gateway reads
+		// auth state through is_configured() and get_granted_scopes() — so
+		// this guards the public method rather than a merchant-facing path.
+		if ( ! $this->is_configured() ) {
+			// The SDK would otherwise have raised this, and its rejection is
+			// what used to produce the log line below; returning early must
+			// not make the one self-fixable failure the silent one.
+			$this->log( 'Access token request skipped: the client is not configured' );
+
+			return new WP_Error(
+				'blinkpay_not_configured',
+				__( 'BlinkPay is not configured. Enter the client ID and client secret in the gateway settings.', 'blinkpay-nz-for-woocommerce' ),
+				array(
+					'status' => 0,
+					'body'   => null,
+				)
+			);
+		}
+
 		try {
 			return $this->client->getAccessToken( (bool) $force_refresh );
 		} catch ( BlinkDebitApiException $exception ) {

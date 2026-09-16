@@ -18,6 +18,23 @@ class TokenCacheTest extends TestCase {
 		wc_blinkpay_tests_reset();
 	}
 
+	/**
+	 * Queues one token response.
+	 *
+	 * @param string $token The access token to answer with.
+	 */
+	private function queue_token( $token ) {
+		$GLOBALS['wc_blinkpay_http_responses'][] = array(
+			'response' => array( 'code' => 200 ),
+			'body'     => json_encode(
+				array(
+					'access_token' => $token,
+					'expires_in'   => 3600,
+				)
+			),
+		);
+	}
+
 	public function test_a_value_with_a_ttl_is_stored_as_a_transient() {
 		$cache = new WC_BlinkPay_Token_Cache();
 		$cache->set( 'blinkpay_token_abc', 'tok-1', 3300 );
@@ -88,12 +105,30 @@ class TokenCacheTest extends TestCase {
 		$sandbox    = new BlinkDebitClient( 'client-id', 'secret', true, $cache, new WC_BlinkPay_HTTP_Transport() );
 		$production = new BlinkDebitClient( 'client-id', 'secret', false, $cache, new WC_BlinkPay_HTTP_Transport() );
 
-		$cache->set( 'blinkpay_token_' . hash( 'sha256', 'sandbox|client-id' ), 'sandbox-token', 3300 );
+		$this->queue_token( 'sandbox-token' );
+		$this->queue_token( 'production-token' );
 
-		// A production client must never be served the sandbox's token, so
-		// its own lookup misses and it fetches one of its own.
-		$this->assertTrue( $sandbox->isSandbox() );
-		$this->assertFalse( $production->isSandbox() );
-		$this->assertNull( $cache->get( 'blinkpay_token_' . hash( 'sha256', 'production|client-id' ) ) );
+		// Driving a real fetch through each client is what proves the scoping:
+		// the production client has to miss the token the sandbox client just
+		// cached and go and get its own. Asserting on keys alone would still
+		// pass with the prefixing removed.
+		$this->assertSame( 'sandbox-token', $sandbox->getAccessToken() );
+		$this->assertSame( 'production-token', $production->getAccessToken() );
+
+		// Each was authenticated against its own host, so a token minted for
+		// one environment can never be presented to the other.
+		$this->assertSame( 'https://sandbox.debit.blinkpay.co.nz/oauth2/token', $GLOBALS['wc_blinkpay_http_requests'][0]['url'] );
+		$this->assertSame( 'https://debit.blinkpay.co.nz/oauth2/token', $GLOBALS['wc_blinkpay_http_requests'][1]['url'] );
+
+		// Two environments, two cache entries: a shared key would leave one.
+		$this->assertSame(
+			'sandbox-token',
+			$GLOBALS['wc_blinkpay_transients'][ 'wc_blinkpay_token_' . hash( 'sha256', 'sandbox|client-id' ) ]
+		);
+		$this->assertSame(
+			'production-token',
+			$GLOBALS['wc_blinkpay_transients'][ 'wc_blinkpay_token_' . hash( 'sha256', 'production|client-id' ) ]
+		);
+		$this->assertCount( 2, $GLOBALS['wc_blinkpay_transients'] );
 	}
 }

@@ -102,6 +102,36 @@ class HttpTransportTest extends TestCase {
 		$this->assertSame( '5', $result['headers']['retry-after'], 'The SDK reads Retry-After by its lower-cased name.' );
 	}
 
+	public function test_headers_arriving_as_the_wordpress_dictionary_are_unwrapped() {
+		// The bootstrap's other cases hand back a plain array, which real
+		// WordPress never does: it returns a case-insensitive dictionary, and
+		// only unwrapping it through getAll() keeps Retry-After reaching the
+		// SDK's backoff.
+		$result = $this->send(
+			array(
+				'response' => array( 'code' => 429 ),
+				'body'     => '{"code":"BP999"}',
+				'headers'  => new WC_BlinkPay_Test_Header_Dictionary(
+					array(
+						'Retry-After' => '5',
+						'Set-Cookie'  => array( 'a=1', 'b=2' ),
+					)
+				),
+			)
+		);
+
+		// Asserted whole rather than key by key: a transport that stopped
+		// unwrapping returns no headers at all, and that must read as a
+		// failure rather than an undefined-index error.
+		$this->assertSame(
+			array(
+				'retry-after' => '5',
+				'set-cookie'  => 'b=2',
+			),
+			$result['headers']
+		);
+	}
+
 	public function test_a_repeated_response_header_collapses_to_a_single_value() {
 		$result = $this->send(
 			array(
@@ -125,5 +155,26 @@ class HttpTransportTest extends TestCase {
 		$this->expectExceptionMessage( 'Operation timed out.' );
 
 		$transport->send( 'GET', 'https://sandbox.debit.blinkpay.co.nz/payments/v1/meta', array(), null, 30 );
+	}
+
+	public function test_the_failure_message_is_left_unescaped_for_its_consumers() {
+		$GLOBALS['wc_blinkpay_http_responses'][] = new WP_Error(
+			'http_request_failed',
+			'cURL error 60: SSL peer certificate "debit.blinkpay.co.nz" & chain rejected.'
+		);
+
+		$transport = new WC_BlinkPay_HTTP_Transport();
+
+		try {
+			$transport->send( 'GET', 'https://sandbox.debit.blinkpay.co.nz/payments/v1/meta', array(), null, 30 );
+			$this->fail( 'A WP_Error must become a TransportException.' );
+		} catch ( TransportException $exception ) {
+			// Order notes are sanitised with wp_kses_post() on output and the
+			// admin's refund error is shown through a JavaScript alert();
+			// escaping here would put &quot; and &amp; in front of the merchant.
+			$this->assertStringContainsString( '"debit.blinkpay.co.nz" & chain', $exception->getMessage() );
+			$this->assertStringNotContainsString( '&amp;', $exception->getMessage() );
+			$this->assertStringNotContainsString( '&quot;', $exception->getMessage() );
+		}
 	}
 }

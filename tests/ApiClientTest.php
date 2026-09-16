@@ -146,8 +146,18 @@ class ApiClientTest extends TestCase {
 		$client = new WC_BlinkPay_Test_API_Client( '', '', true, false );
 
 		$this->assertFalse( $client->is_configured() );
-		$this->assertInstanceOf( WP_Error::class, $client->get_access_token() );
+
+		$error = $client->get_access_token();
+
+		$this->assertInstanceOf( WP_Error::class, $error );
 		$this->assertSame( array(), $GLOBALS['wc_blinkpay_http_requests'] );
+
+		// This is the one API failure the merchant can fix themselves, so it
+		// keeps its own code and a translated message naming where to fix it,
+		// rather than surfacing the SDK's untranslated wording.
+		$this->assertSame( 'blinkpay_not_configured', $error->get_error_code() );
+		$this->assertStringContainsString( 'gateway settings', $error->get_error_message() );
+		$this->assertSame( 0, $error->get_error_data()['status'], 'Nothing reached the API, so the gateway must read this as "not sent".' );
 	}
 
 	public function test_a_stale_token_is_refreshed_once_and_the_call_retried() {
@@ -166,7 +176,7 @@ class ApiClientTest extends TestCase {
 		$this->assertSame( 'Bearer tok-2', $GLOBALS['wc_blinkpay_http_requests'][3]['args']['headers']['Authorization'], 'A rotated credential must not strand the cached token.' );
 	}
 
-	public function test_a_refund_sends_its_idempotency_key() {
+	public function test_a_refund_is_routed_to_the_refunds_endpoint_with_its_idempotency_key() {
 		$this->queue_token();
 		$this->queue_response( 201, array( 'refund_id' => self::QUICK_PAYMENT_ID ) );
 
@@ -176,6 +186,13 @@ class ApiClientTest extends TestCase {
 		);
 
 		$this->assertSame( self::QUICK_PAYMENT_ID, $response['refund_id'] );
-		$this->assertSame( self::IDEMPOTENCY_KEY, $GLOBALS['wc_blinkpay_http_requests'][1]['args']['headers']['idempotency-key'] );
+
+		// This is the call that moves money back to the customer, so the
+		// route carries as much of the guarantee as the idempotency key: a
+		// refund sent to the wrong path, or as the wrong verb, must fail here.
+		$request = $GLOBALS['wc_blinkpay_http_requests'][1];
+		$this->assertSame( 'https://sandbox.debit.blinkpay.co.nz/payments/v1/refunds', $request['url'] );
+		$this->assertSame( 'POST', $request['args']['method'] );
+		$this->assertSame( self::IDEMPOTENCY_KEY, $request['args']['headers']['idempotency-key'] );
 	}
 }
