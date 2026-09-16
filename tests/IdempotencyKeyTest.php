@@ -173,4 +173,119 @@ class IdempotencyKeyTest extends TestCase {
 			$client->create_calls[1]['idempotency_key']
 		);
 	}
+
+	/**
+	 * Registers a settled, card-paid order that can be refunded.
+	 *
+	 * @param int $order_id The order ID to register.
+	 * @return WC_BlinkPay_Test_Order
+	 */
+	private function register_refundable_order( $order_id ) {
+		$order = $this->register_order( $order_id );
+		$order->update_meta_data( '_blinkpay_payment_id', 'pay-' . $order_id );
+		$order->update_meta_data( '_blinkpay_accepted_reason', 'card_network_accepted' );
+		$order->payment_complete( 'pay-' . $order_id );
+
+		return $order;
+	}
+
+	public function test_a_refund_carries_an_idempotency_key() {
+		$order = $this->register_refundable_order( 205 );
+
+		$client  = new WC_BlinkPay_Fake_API_Client(
+			array(),
+			array(),
+			array( array( 'refund_id' => 'ref-1' ) ),
+			array( array( 'status' => 'completed' ) )
+		);
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		$this->assertTrue( $gateway->process_refund( 205, 49.95, '' ) );
+
+		$this->assertCount( 1, $client->refund_idempotency_keys );
+		$this->assertNotEmpty( $client->refund_idempotency_keys[0], 'A money-moving refund must be replay-protected by an idempotency key.' );
+		$this->assertSame( '', $order->get_meta( '_blinkpay_idempotency_refund' ), 'A key bound to a created refund is spent and must be discarded.' );
+	}
+
+	public function test_a_lost_refund_response_retry_reuses_the_same_idempotency_key() {
+		$this->register_refundable_order( 206 );
+
+		$client  = new WC_BlinkPay_Fake_API_Client(
+			array(),
+			array(),
+			array(
+				new WP_Error( 'blinkpay_api_error', 'The Blink Debit API could not be reached: timed out.', array( 'status' => 0 ) ),
+				array( 'refund_id' => 'ref-replayed' ),
+			),
+			array( array( 'status' => 'completed' ) )
+		);
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		// The first response is lost, so whether the refund was created is
+		// unknown; the retry must replay the same key rather than risk
+		// refunding the customer twice.
+		$this->assertInstanceOf( WP_Error::class, $gateway->process_refund( 206, 49.95, '' ) );
+		$this->assertTrue( $gateway->process_refund( 206, 49.95, '' ) );
+
+		$this->assertCount( 2, $client->refund_idempotency_keys );
+		$this->assertSame(
+			$client->refund_idempotency_keys[0],
+			$client->refund_idempotency_keys[1],
+			'An unresolved refund must reuse its key so the API replays rather than refunds again.'
+		);
+	}
+
+	public function test_a_second_partial_refund_mints_a_fresh_idempotency_key() {
+		$this->register_refundable_order( 207 );
+
+		$client  = new WC_BlinkPay_Fake_API_Client(
+			array(),
+			array(),
+			array(
+				array( 'refund_id' => 'ref-part-1' ),
+				array( 'refund_id' => 'ref-part-2' ),
+			),
+			array(
+				array( 'status' => 'completed' ),
+				array( 'status' => 'completed' ),
+			)
+		);
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		$this->assertTrue( $gateway->process_refund( 207, 10.00, '' ) );
+		$this->assertTrue( $gateway->process_refund( 207, 15.00, '' ) );
+
+		$this->assertCount( 2, $client->refund_idempotency_keys );
+		$this->assertNotSame(
+			$client->refund_idempotency_keys[0],
+			$client->refund_idempotency_keys[1],
+			'A genuinely different refund must not replay the first one and leave the customer short.'
+		);
+	}
+
+	public function test_a_refund_idempotency_conflict_discards_the_key_and_warns_the_merchant() {
+		$order = $this->register_refundable_order( 208 );
+
+		$client  = new WC_BlinkPay_Fake_API_Client(
+			array(),
+			array(),
+			array(
+				new WP_Error(
+					'blinkpay_api_error',
+					'Idempotency key has already been used. (BP702)',
+					array(
+						'status' => 409,
+						'body'   => array( 'code' => 'BP702' ),
+					)
+				),
+			)
+		);
+		$gateway = new WC_BlinkPay_Test_Gateway( $client );
+
+		$result = $gateway->process_refund( 208, 49.95, '' );
+
+		$this->assertInstanceOf( WP_Error::class, $result );
+		$this->assertSame( '', $order->get_meta( '_blinkpay_idempotency_refund' ), 'A key rejected with 409 can never create this refund and must be discarded.' );
+		$this->assertStringContainsString( 'merchant portal', $result->get_error_message(), 'The merchant must confirm the earlier refund before retrying, not simply resubmit.' );
+	}
 }

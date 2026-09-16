@@ -69,14 +69,14 @@ class WC_BlinkPay_Double_Submission_Client extends WC_BlinkPay_Fake_API_Client {
 	/** @var bool|WP_Error|null What the rival's process_refund() returned. */
 	public $rival_result;
 
-	public function create_refund( array $payload ) {
+	public function create_refund( array $payload, $idempotency_key = null ) {
 		if ( $this->rival_gateway ) {
 			$rival               = $this->rival_gateway;
 			$this->rival_gateway = null;
 			$this->rival_result  = $rival->process_refund( $this->rival_order_id, 49.95, '' );
 		}
 
-		return parent::create_refund( $payload );
+		return parent::create_refund( $payload, $idempotency_key );
 	}
 }
 
@@ -114,7 +114,7 @@ class WC_BlinkPay_Double_Checkout_Client extends WC_BlinkPay_Fake_API_Client {
  */
 class WC_BlinkPay_Throwing_Refund_Client extends WC_BlinkPay_Fake_API_Client {
 
-	public function create_refund( array $payload ) {
+	public function create_refund( array $payload, $idempotency_key = null ) {
 		throw new RuntimeException( 'A third-party hook exploded mid-refund.' );
 	}
 }

@@ -121,12 +121,22 @@ function wp_json_encode( $data ) {
 	return json_encode( $data );
 }
 
-function wp_remote_post( $url, $args = array() ) {
+function wp_remote_request( $url, $args = array() ) {
 	$GLOBALS['wc_blinkpay_http_requests'][] = array(
 		'url'  => $url,
 		'args' => $args,
 	);
+
+	if ( ! $GLOBALS['wc_blinkpay_http_responses'] ) {
+		return new WP_Error( 'http_request_failed', 'No canned HTTP response.' );
+	}
+
 	return array_shift( $GLOBALS['wc_blinkpay_http_responses'] );
+}
+
+function wp_remote_post( $url, $args = array() ) {
+	$args['method'] = 'POST';
+	return wp_remote_request( $url, $args );
 }
 
 function wp_remote_retrieve_response_code( $response ) {
@@ -135,6 +145,41 @@ function wp_remote_retrieve_response_code( $response ) {
 
 function wp_remote_retrieve_body( $response ) {
 	return isset( $response['body'] ) ? $response['body'] : '';
+}
+
+function wp_remote_retrieve_headers( $response ) {
+	return isset( $response['headers'] ) ? $response['headers'] : array();
+}
+
+/**
+ * Stands in for the WpOrg\Requests\Utility\CaseInsensitiveDictionary that
+ * WordPress really returns from wp_remote_retrieve_headers(). A plain array
+ * would never exercise the getAll() unwrapping the transport depends on, which
+ * is the line that decides whether Retry-After reaches the SDK's backoff.
+ *
+ * WP_HTTP_Requests_Response::get_headers() collapses a header seen once to a
+ * scalar and keeps an array only for a repeated one, so both value shapes are
+ * real. Its keys arrive lower-cased; the tests pass them in mixed case anyway,
+ * which additionally exercises the transport's own lower-casing.
+ */
+class WC_BlinkPay_Test_Header_Dictionary {
+
+	/** @var array<string, string|string[]> */
+	private $data;
+
+	/**
+	 * @param array $data The headers, keyed as WordPress would key them.
+	 */
+	public function __construct( array $data ) {
+		$this->data = $data;
+	}
+
+	/**
+	 * @return array<string, string|string[]>
+	 */
+	public function getAll() { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid -- mirrors the WordPress class this stands in for.
+		return $this->data;
+	}
 }
 
 /**
@@ -285,6 +330,10 @@ class WP_Error {
 		$this->code    = $code;
 		$this->message = $message;
 		$this->data    = $data;
+	}
+
+	public function get_error_code() {
+		return $this->code;
 	}
 
 	public function get_error_message() {
@@ -569,7 +618,10 @@ class WC_BlinkPay_Test_Order {
 // The main plugin file is loaded too, so its functions — the manual-refund
 // veto above all — are under test; its load-time hook registrations land in
 // the no-op stubs above.
+require_once dirname( __DIR__ ) . '/vendor/autoload.php';
 require_once dirname( __DIR__ ) . '/blinkpay-nz-for-woocommerce.php';
+require_once dirname( __DIR__ ) . '/includes/class-wc-blinkpay-http-transport.php';
+require_once dirname( __DIR__ ) . '/includes/class-wc-blinkpay-token-cache.php';
 require_once dirname( __DIR__ ) . '/includes/class-wc-blinkpay-api-client.php';
 require_once dirname( __DIR__ ) . '/includes/class-wc-blinkpay-gateway.php';
 require_once dirname( __DIR__ ) . '/includes/class-wc-blinkpay-refund-blocked-exception.php';
@@ -590,6 +642,17 @@ class WC_BlinkPay_Test_Order_Refund {
 
 	public function get_parent_id( $context = 'view' ) {
 		return $this->parent_id;
+	}
+}
+
+/**
+ * The real API client with the SDK's retry backoff stubbed out, so tests that
+ * drive the whole stack do not wait out real seconds of sleep.
+ */
+class WC_BlinkPay_Test_API_Client extends WC_BlinkPay_API_Client {
+
+	protected function pause( $milliseconds ) {
+		// Real sleeps would slow the suite without changing behaviour.
 	}
 }
 
@@ -630,6 +693,9 @@ class WC_BlinkPay_Fake_API_Client {
 
 	/** @var array[] Refund payloads sent, in order. */
 	public $refund_calls = array();
+
+	/** @var array Idempotency keys sent with each refund creation, in order. */
+	public $refund_idempotency_keys = array();
 
 	/** @var string[] Refund IDs retrieved, in order. */
 	public $get_refund_calls = array();
@@ -696,8 +762,9 @@ class WC_BlinkPay_Fake_API_Client {
 		return count( $this->get_responses ) > 1 ? array_shift( $this->get_responses ) : $this->get_responses[0];
 	}
 
-	public function create_refund( array $payload ) {
-		$this->refund_calls[] = $payload;
+	public function create_refund( array $payload, $idempotency_key = null ) {
+		$this->refund_calls[]            = $payload;
+		$this->refund_idempotency_keys[] = $idempotency_key;
 
 		if ( ! $this->refund_responses ) {
 			return new WP_Error( 'blinkpay_test', 'No canned refund response.' );
