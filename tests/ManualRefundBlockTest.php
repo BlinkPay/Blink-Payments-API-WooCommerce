@@ -43,6 +43,29 @@ class ManualRefundBlockTest extends TestCase {
 		);
 	}
 
+	public function test_the_veto_message_is_left_unescaped_for_its_consumers() {
+		$this->register_order( 605 );
+
+		try {
+			wc_blinkpay_block_manual_refund(
+				new WC_BlinkPay_Test_Order_Refund( 605 ),
+				array(
+					'order_id'       => 605,
+					'amount'         => 10.00,
+					'refund_payment' => false,
+				)
+			);
+			$this->fail( 'A money-carrying manual refund must be vetoed.' );
+		} catch ( WC_BlinkPay_Refund_Blocked_Exception $exception ) {
+			// wc_create_refund() hands this message back verbatim as a
+			// WP_Error, which reaches the merchant through a JavaScript
+			// alert() and the REST API as JSON. Escaping it here would show
+			// them &quot; around the button name they are being sent to.
+			$this->assertStringContainsString( '"Refund via BlinkPay"', $exception->getMessage() );
+			$this->assertStringNotContainsString( '&quot;', $exception->getMessage() );
+		}
+	}
+
 	public function test_a_gateway_refund_is_allowed_through() {
 		$this->register_order( 602 );
 		$this->expectNotToPerformAssertions();
