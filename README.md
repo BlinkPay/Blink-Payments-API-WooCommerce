@@ -120,20 +120,32 @@ npx @wordpress/env start    # http://localhost:8888, admin / password
 npx @wordpress/env stop     # `destroy` also wipes the database
 ```
 
-### Unit tests
+### Tests
 
-The PHPUnit suite in `tests/` runs against WordPress stubs, so it needs no WordPress installation — only PHP 7.4+ and Composer (on macOS: `brew install php composer`), or Docker:
+`composer test` runs both gates CI enforces — the unit suite and Plugin Check — so a release-blocking finding surfaces locally rather than in CI. It needs Docker, because Plugin Check needs a WordPress install.
 
 ```sh
 composer install && composer test
+```
+
+The PHPUnit suite in `tests/` runs against WordPress stubs, so on its own it needs no WordPress installation and no Docker — only PHP 7.4+ and Composer (on macOS: `brew install php composer`):
+
+```sh
+composer test:unit
 
 # or without a local PHP:
-docker run --rm -v "$PWD":/app -w /app composer:2 sh -c "composer install && composer test"
+docker run --rm -v "$PWD":/app -w /app composer:2 sh -c "composer install && composer test:unit"
 ```
 
 ### Plugin Check
 
-[Plugin Check](https://wordpress.org/plugins/plugin-check/) is the tool the WordPress.org review team runs against submissions. Run it before every release:
+[Plugin Check](https://wordpress.org/plugins/plugin-check/) is the tool the WordPress.org review team runs against submissions, and the `wordpress-org` release job is gated on it. `composer test` covers it; to run it alone:
+
+```sh
+composer test:plugin-check
+```
+
+That builds the plugin, starts wp-env, checks the built tree and — unlike `wp plugin check`, which exits 0 even when it reports errors — exits non-zero if anything is found. The manual equivalent, for reference:
 
 Check the built tree rather than the repository root, as CI does: the zip is what the review team receives, and it contains the bundled SDK under `vendor/` but none of the development files. Build it, point wp-env at it with a local `.wp-env.override.json`, then check it:
 
