@@ -2,9 +2,12 @@
 # Runs Plugin Check locally against the same tree the CI plugin-check job
 # checks, so a release-blocking finding surfaces here rather than in CI.
 #
-# Two traps this exists to cover:
+# Three traps this exists to cover:
 #  - `wp plugin check` exits 0 even when it reports errors, so the findings are
 #    parsed here and turned into a non-zero exit.
+#  - A run that fails outright (plugin not installed, container gone) prints
+#    nothing to parse, which reads exactly like a clean run. Its exit status is
+#    captured and reported rather than discarded, so a broken run cannot pass.
 #  - Checking the repository root instead of the build output raises findings
 #    about development files the zip never contains, so the mounted tree is
 #    verified to be the built one before anything is reported.
@@ -14,12 +17,16 @@ cd "$(dirname "$0")/.."
 PLUGIN_SLUG=blinkpay-nz-for-woocommerce
 WP_ENV="npx @wordpress/env"
 
+CHECK_OUT=$(mktemp)
+CHECK_ERR=$(mktemp)
+trap 'rm -f "$CHECK_OUT" "$CHECK_ERR"' EXIT
+
 .github/build-plugin.sh
 
 # wp-env supplies the WordPress install Plugin Check needs. Starting an already
 # started environment is a no-op, so this is safe to run every time.
 $WP_ENV start >/dev/null 2>&1 || {
-	echo "::error::plugin-check.sh: could not start wp-env. Is Docker running?"
+	echo "::error::plugin-check.sh: could not start wp-env. Is Docker running?" >&2
 	exit 1
 }
 
@@ -27,29 +34,46 @@ $WP_ENV start >/dev/null 2>&1 || {
 # alone mounts the repository root, whose tests/ and phpunit.xml.dist would
 # produce findings against files no release contains.
 if $WP_ENV run cli test -e "wp-content/plugins/$PLUGIN_SLUG/tests" >/dev/null 2>&1; then
-	echo "::error::plugin-check.sh: wp-env is serving the repository root, not the build output."
-	echo "Create .wp-env.override.json (it is gitignored) so the built tree is checked:"
-	echo ''
-	echo '  {'
-	echo '    "plugins": ['
-	echo '      "https://downloads.wordpress.org/plugin/woocommerce.latest-stable.zip",'
-	echo '      "https://downloads.wordpress.org/plugin/plugin-check.latest-stable.zip",'
-	echo "      \"./build/$PLUGIN_SLUG\""
-	echo '    ]'
-	echo '  }'
-	echo ''
-	echo "Then run: $WP_ENV start --update"
+	echo "::error::plugin-check.sh: wp-env is serving the repository root, not the build output." >&2
+	echo "Create .wp-env.override.json (it is gitignored) so the built tree is checked:" >&2
+	echo '' >&2
+	echo '  {' >&2
+	echo '    "plugins": [' >&2
+	echo '      "https://downloads.wordpress.org/plugin/woocommerce.latest-stable.zip",' >&2
+	echo '      "https://downloads.wordpress.org/plugin/plugin-check.latest-stable.zip",' >&2
+	echo "      \"./build/$PLUGIN_SLUG\"" >&2
+	echo '    ]' >&2
+	echo '  }' >&2
+	echo '' >&2
+	echo "Then run: $WP_ENV start --update" >&2
 	exit 1
 fi
 
 echo "Running Plugin Check against build/$PLUGIN_SLUG ..."
-$WP_ENV run cli wp plugin check "$PLUGIN_SLUG" --format=json >/tmp/blinkpay-plugin-check.json 2>/dev/null || true
+
+# set -e would abort here without a chance to explain, so the status is taken
+# by hand. A non-zero status is the command failing, never a finding: Plugin
+# Check reports findings on a zero exit, which is the whole reason this script
+# parses its output.
+set +e
+$WP_ENV run cli wp plugin check "$PLUGIN_SLUG" --format=json >"$CHECK_OUT" 2>"$CHECK_ERR"
+check_status=$?
+set -e
+
+if [ "$check_status" -ne 0 ]; then
+	echo "::error::plugin-check.sh: 'wp plugin check' failed with exit status $check_status; no conclusion can be drawn about the plugin." >&2
+	echo '--- stderr ---' >&2
+	cat "$CHECK_ERR" >&2
+	echo '--- stdout ---' >&2
+	cat "$CHECK_OUT" >&2
+	exit 1
+fi
 
 # Plugin Check emits one "FILE: <path>" line followed by a JSON array per file,
 # so the stream is walked rather than decoded whole: a single array spanning two
 # files is not valid JSON and would silently parse as nothing.
 php -r '
-	$raw = file_get_contents( "/tmp/blinkpay-plugin-check.json" );
+	$raw = file_get_contents( $argv[1] );
 	$file = "?";
 	$errors = array();
 	$warnings = array();
@@ -97,4 +121,4 @@ php -r '
 		exit( 1 );
 	}
 	echo "Plugin Check: no errors.\n";
-'
+' -- "$CHECK_OUT"
