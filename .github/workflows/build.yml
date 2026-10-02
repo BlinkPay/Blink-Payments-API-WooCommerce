@@ -89,7 +89,7 @@ jobs:
         with:
           name: coverage
       - name: Run Sonar
-        uses: sonarsource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1 — pinned by SHA: a moving tag could be repointed at malicious code
+        uses: sonarsource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.2.1 — pinned by SHA: a moving tag could be repointed at malicious code
         with:
           args: >
             -Dsonar.projectKey=blinkpay-nz-for-woocommerce
