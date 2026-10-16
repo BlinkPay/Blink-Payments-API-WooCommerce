@@ -85,7 +85,7 @@ jobs:
           # Sonar needs full history to attribute issues and measure new code.
           fetch-depth: 0
       - name: Download coverage report
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1 — pinned by SHA: a moving tag could be repointed at malicious code
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.1 — pinned by SHA: a moving tag could be repointed at malicious code
         with:
           name: coverage
       - name: Run Sonar
@@ -128,7 +128,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1 — pinned by SHA: a moving tag could be repointed at malicious code
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.1 — pinned by SHA: a moving tag could be repointed at malicious code
         with:
           name: blinkpay-nz-for-woocommerce
       - name: Attach zip to the GitHub release
