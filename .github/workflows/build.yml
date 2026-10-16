@@ -53,7 +53,7 @@ jobs:
       # measured once on the newest PHP.
       - name: Upload coverage report
         if: matrix.php-version == '8.4'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 — pinned by SHA: a moving tag could be repointed at malicious code
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.1 — pinned by SHA: a moving tag could be repointed at malicious code
         with:
           name: coverage
           path: coverage.xml
@@ -116,7 +116,7 @@ jobs:
           .github/build-plugin.sh
           cd build && zip -r blinkpay-nz-for-woocommerce.zip blinkpay-nz-for-woocommerce
       - name: Upload artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 — pinned by SHA: a moving tag could be repointed at malicious code
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.1 — pinned by SHA: a moving tag could be repointed at malicious code
         with:
           name: blinkpay-nz-for-woocommerce
           path: build/blinkpay-nz-for-woocommerce.zip
