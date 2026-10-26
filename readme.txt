@@ -4,7 +4,7 @@ Tags: payment gateway, open banking, new zealand, pay by bank, pay by card
 Requires at least: 6.0
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.2.0
+Stable tag: 1.2.1
 License: MIT
 License URI: https://opensource.org/licenses/MIT
 
@@ -102,6 +102,9 @@ Yes. The `wc_blinkpay_quick_payment_payload` filter modifies the quick payment r
 
 == Changelog ==
 
+= 1.2.1 =
+* Updated the bundled Blink Debit PHP SDK to 1.0.6 and refreshed the build-pipeline dependencies. No functional changes.
+
 = 1.2.0 =
 * Moved the integration onto BlinkPay's official Blink Debit PHP SDK, which now ships with the plugin. Requests still go through the WordPress HTTP API and access tokens are still cached in WordPress, so proxies, security plugins and existing cached tokens are unaffected.
 * Gained the SDK's request handling: retries on rate limits, server errors and network failures, tracing IDs on every request so BlinkPay support can follow a payment, and validation of IDs and amounts before anything is sent.
@@ -151,6 +154,9 @@ Yes. The `wc_blinkpay_quick_payment_payload` filter modifies the quick payment r
 * Initial release: Blink PayNow quick payments, account-number refunds, classic and block checkout support, HPOS compatibility.
 
 == Upgrade Notice ==
+
+= 1.2.1 =
+Dependency updates only; no changes to the plugin's behaviour.
 
 = 1.2.0 =
 Now built on BlinkPay's official PHP SDK: more resilient requests, traceable support, and refunds protected against accidental double payment. No settings change.
