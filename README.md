@@ -19,7 +19,7 @@ Customers are sent to BlinkPay's hosted gateway, choose their bank — or card, 
 - WooCommerce 7.0+ (classic and block-based checkout are both supported)
 - PHP 7.4+
 - Store currency set to **NZD**
-- BlinkPay merchant credentials (client ID and client secret) — [contact BlinkPay](https://www.blinkpay.co.nz/contact) to get onboarded. Sandbox and production credentials are separate.
+- BlinkPay merchant credentials (client ID and client secret) — [sign up at merchants.blinkpay.co.nz](https://merchants.blinkpay.co.nz) to get them. Sandbox and production credentials are separate.
 
 The plugin talks to BlinkPay through the official [Blink Debit PHP SDK](https://github.com/BlinkPay/Blink-Payments-API-Client-PHP), which ships inside the release zip; sites need no Composer step. HTTP still goes through the WordPress HTTP API rather than cURL, so proxy constants, `http_request_*` filters and your site's CA bundle all apply as before.
 

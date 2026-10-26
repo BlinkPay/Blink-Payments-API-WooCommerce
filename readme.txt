@@ -44,7 +44,7 @@ If surcharging is enabled for your BlinkPay merchant account, BlinkPay adds the 
 * WooCommerce 7.0+
 * PHP 7.4+
 * Store currency set to **NZD**
-* BlinkPay merchant credentials (client ID and client secret) — [contact BlinkPay](https://www.blinkpay.co.nz/contact-us) to get onboarded. Sandbox and production credentials are separate.
+* BlinkPay merchant credentials (client ID and client secret) — [sign up at merchants.blinkpay.co.nz](https://merchants.blinkpay.co.nz) to get them. Sandbox and production credentials are separate.
 
 = External service =
 
