@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "9085cf985f6103556c2c41ab0aaca840",
+    "content-hash": "ddfe20e380b8ecd30ce0fe95a5dddc3f",
     "packages": [
         {
             "name": "blinkpay-nz/blink-debit-api-client-php",
