@@ -103,7 +103,7 @@ Yes. The `wc_blinkpay_quick_payment_payload` filter modifies the quick payment r
 == Changelog ==
 
 = 1.2.1 =
-* Updated the bundled Blink Debit PHP SDK to 1.0.6 and refreshed the build-pipeline dependencies. No functional changes.
+* Updated the bundled Blink Debit PHP SDK to 1.0.8 and refreshed the build-pipeline dependencies. No functional changes.
 
 = 1.2.0 =
 * Moved the integration onto BlinkPay's official Blink Debit PHP SDK, which now ships with the plugin. Requests still go through the WordPress HTTP API and access tokens are still cached in WordPress, so proxies, security plugins and existing cached tokens are unaffected.
