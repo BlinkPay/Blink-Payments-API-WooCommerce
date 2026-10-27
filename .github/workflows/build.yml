@@ -110,9 +110,11 @@ jobs:
   # Aikido's PR check waits 30 minutes for a report tied to the PR head commit,
   # which the action reads from the event payload. Kept as its own job so the
   # OIDC token grant stays off the test jobs, as Aikido recommends. Fork PRs
-  # cannot mint an OIDC token, so they are skipped.
+  # cannot mint an OIDC token, so they are skipped. So are tag builds: Aikido
+  # rejects an OIDC token minted for a tag ref ("OIDC token is not from a
+  # branch"), and the tagged commit was already uploaded from master.
   aikido-coverage:
-    if: ${{ !github.event.pull_request.head.repo.fork }}
+    if: ${{ github.ref_type == 'branch' && !github.event.pull_request.head.repo.fork }}
     needs: test
     runs-on: ubuntu-latest
     permissions:
