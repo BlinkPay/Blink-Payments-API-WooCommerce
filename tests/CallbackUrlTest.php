@@ -1,6 +1,6 @@
 <?php
 /**
- * BDL-1619: redirect URIs must be whitelisted in the BlinkPay client portal
+ * BDL-1619: redirect URIs must be whitelisted in the BlinkPay merchant portal
  * before consents can be created, so the plugin must surface the site's
  * callback URL to the merchant and name the likely cause when consent
  * creation fails on an unregistered redirect URI.

@@ -177,7 +177,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 			'callback_url'    => array(
 				'title'       => __( 'Callback URL', 'blinkpay-nz-for-woocommerce' ),
 				'type'        => 'callback_url',
-				'description' => __( 'Register this URL in the BlinkPay client portal under Settings > API before taking payments. Redirect URIs must be whitelisted separately for the sandbox and production environments, so register it for both.', 'blinkpay-nz-for-woocommerce' ),
+				'description' => __( 'Register this URL in the BlinkPay merchant portal under Settings > API Settings (Whitelisted Redirect URLs) before taking payments. Redirect URIs must be whitelisted separately for the sandbox and production environments, so register it for both.', 'blinkpay-nz-for-woocommerce' ),
 			),
 			'pcr_particulars' => array(
 				'title'       => __( 'Bank statement particulars', 'blinkpay-nz-for-woocommerce' ),
@@ -448,7 +448,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 				$order->add_order_note(
 					sprintf(
 						/* translators: 1: callback URL, 2: environment name (sandbox or production) */
-						__( 'BlinkPay rejected the redirect URI, most likely because this site\'s callback URL is not whitelisted for your merchant account. Register %1$s in the BlinkPay client portal under Settings > API for the %2$s environment (each environment keeps its own whitelist), then try again.', 'blinkpay-nz-for-woocommerce' ),
+						__( 'BlinkPay rejected the redirect URI, most likely because this site\'s callback URL is not whitelisted for your merchant account. Register %1$s in the BlinkPay merchant portal under Settings > API Settings for the %2$s environment (each environment keeps its own whitelist), then try again.', 'blinkpay-nz-for-woocommerce' ),
 						$this->get_callback_url(),
 						$this->sandbox ? 'sandbox' : 'production'
 					)
@@ -1848,7 +1848,7 @@ class WC_BlinkPay_Gateway extends WC_Payment_Gateway {
 
 	/**
 	 * The base callback URL for this site, which the merchant must whitelist
-	 * in the BlinkPay client portal for each environment. Redirect URI
+	 * in the BlinkPay merchant portal for each environment. Redirect URI
 	 * matching is prefix-based, so this one URL covers every order.
 	 *
 	 * @return string
