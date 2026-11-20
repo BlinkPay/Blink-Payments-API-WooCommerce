@@ -8,16 +8,16 @@
     "packages": [
         {
             "name": "blinkpay-nz/blink-debit-api-client-php",
-            "version": "1.0.8",
+            "version": "1.1.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/BlinkPay/Blink-Payments-API-Client-PHP.git",
-                "reference": "9bc760a1886e3d22c45a18263d8cba5cf58af7e7"
+                "reference": "d614936e35e11ef2c2bd68827656e8dfde1aee8e"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/BlinkPay/Blink-Payments-API-Client-PHP/zipball/9bc760a1886e3d22c45a18263d8cba5cf58af7e7",
-                "reference": "9bc760a1886e3d22c45a18263d8cba5cf58af7e7",
+                "url": "https://api.github.com/repos/BlinkPay/Blink-Payments-API-Client-PHP/zipball/d614936e35e11ef2c2bd68827656e8dfde1aee8e",
+                "reference": "d614936e35e11ef2c2bd68827656e8dfde1aee8e",
                 "shasum": ""
             },
             "require": {
@@ -93,7 +93,7 @@
                 "issues": "https://github.com/BlinkPay/Blink-Payments-API-Client-PHP/issues",
                 "source": "https://github.com/BlinkPay/Blink-Payments-API-Client-PHP"
             },
-            "time": "2026-10-27T04:08:48+00:00"
+            "time": "2026-11-13T10:04:18+00:00"
         }
     ],
     "packages-dev": [
